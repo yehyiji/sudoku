@@ -1529,11 +1529,29 @@ const lastPinchDist = useRef(null);
           return zones;
       }, [activeCells, selectedChar, cSizeDef, interactionMode]);
 
-      const handleSaveCode = () => {
+      const handleSaveCode = async () => {
         const saveData = { sId: sizeId, dId: diffId, l: levelData, c: cells.map(c => ({ i: c.id, v: c.value, d: c.drafts, o: c.owner })), s: strokes };
-        const code = btoa(encodeURIComponent(JSON.stringify(saveData))); setSaveCode(code);
-        const ta = document.createElement("textarea"); ta.value = code; document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); showToast("✅ 已產生並複製代碼！"); } catch (err) {} document.body.removeChild(ta);
+        const code = btoa(encodeURIComponent(JSON.stringify(saveData))); 
+        setSaveCode(code);
+        
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                await navigator.clipboard.writeText(code);
+                showToast("✅ 已產生並複製代碼！");
+            } catch (err) {
+                showToast("❌ 複製失敗，請手動選取");
+            }
+        } else {
+            const ta = document.createElement("textarea"); 
+            ta.value = code; 
+            ta.style.position = 'fixed'; // 避免彈跳
+            ta.style.opacity = '0';
+            document.body.appendChild(ta); 
+            ta.select();
+            ta.setSelectionRange(0, 99999); // 為了手機
+            try { document.execCommand('copy'); showToast("✅ 已產生並複製代碼！"); } catch (err) {} 
+            document.body.removeChild(ta);
+        }
       };
       
       const handleQuickPaste = async () => {
