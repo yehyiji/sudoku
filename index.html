@@ -428,9 +428,10 @@ console.error = function() {
       const [selectedChar, setSelectedChar] = useState(null); 
       
       // 禮物與反擊機制 (盤面直接覆蓋)
-      const [boardGifts, setBoardGifts] = useState([]);
+      const [unopenedGifts, setUnopenedGifts] = useState({});
       const [keyMapping, setKeyMapping] = useState(initialDataRef.current.sizeDef.chars);
       const [flippedKeys, setFlippedKeys] = useState([]); 
+      const [flares, setFlares] = useState([]);
 
       const processedEventsRef = useRef(new Set());
       const completedRegionsRef = useRef(new Set());
@@ -483,7 +484,7 @@ console.error = function() {
       const unsubRef = useRef(null);
       const zoomContainerRef = useRef(null);
 const lastPinchDist = useRef(null);
-      const stateRef = useRef({ cells: [], localCells: [], levelData: null, startTime: Date.now(), sizeId: 9, diffId: 'medium', strokes: [], isGenerating: false, selectedChar: null, isGhostRace: false, isBrawlMode: false, brawlWinners: [], brawlSettings: { winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true }, winner: null, isAutoFilling: false, matchPhase: 'playing', countdownTarget: null, giftEvents: [], keyMapping: [] });
+      const stateRef = useRef({ cells: [], localCells: [], levelData: null, startTime: Date.now(), sizeId: 9, diffId: 'medium', strokes: [], isGenerating: false, selectedChar: null, isGhostRace: false, isBrawlMode: false, brawlWinners: [], brawlSettings: { winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true }, winner: null, isAutoFilling: false, matchPhase: 'playing', countdownTarget: null, giftEvents: [], keyMapping: [], unopenedGifts: {} });
       
       const playersListRef = useRef([]);
 
@@ -555,17 +556,7 @@ const lastPinchDist = useRef(null);
 
       useEffect(() => { playersListRef.current = playersList; }, [playersList]);
 
-      // 定期清理過期的盤面禮物
-      useEffect(() => {
-          const t = setInterval(() => {
-              const now = Date.now();
-              setBoardGifts(prev => {
-                  const next = prev.filter(g => g.expireTime > now);
-                  return next.length !== prev.length ? next : prev;
-              });
-          }, 500);
-          return () => clearInterval(t);
-      }, []);
+      // 定期清理過期的盤面禮物 (已經廢棄，禮物永久保存不用清理)
 
       useEffect(() => {
         if (matchPhase === 'countdown' && countdownTarget) {
@@ -606,7 +597,7 @@ const lastPinchDist = useRef(null);
       useEffect(() => {
           setGhostHints({});
           completedRegionsRef.current.clear();
-          setBoardGifts([]);
+          setUnopenedGifts({});
           scrambledCharsRef.current.clear();
           processedEventsRef.current.clear();
       }, [startTime]);
@@ -664,7 +655,7 @@ const lastPinchDist = useRef(null);
         initAuth(); onAuthStateChanged(auth, function(u) { if(u) setUser(u); });
       }, []);
 
-      useEffect(function() { stateRef.current = { ...stateRef.current, cells, localCells, levelData, startTime, sizeId, diffId, strokes, isGhostRace, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping }; }, [cells, localCells, levelData, startTime, sizeId, diffId, strokes, isGhostRace, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping]);
+      useEffect(function() { stateRef.current = { ...stateRef.current, cells, localCells, levelData, startTime, sizeId, diffId, strokes, isGhostRace, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping, unopenedGifts }; }, [cells, localCells, levelData, startTime, sizeId, diffId, strokes, isGhostRace, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping, unopenedGifts]);
 
       const conflictCellIds = useMemo(() => {
         const conflicts = new Set();
@@ -785,7 +776,7 @@ const lastPinchDist = useRef(null);
                   let candidates = [];
                   
                   validPlayers.forEach(p => {
-                      const score = solvedCounts[p.id] || 0;
+                      const score = (solvedCounts[p.id] || 0) + (stateRef.current.unopenedGifts[p.id] ? stateRef.current.unopenedGifts[p.id].length : 0);
                       if (score < minScore) {
                           minScore = score;
                           candidates = [p.id];
@@ -803,13 +794,14 @@ const lastPinchDist = useRef(null);
                   if (engineRef.current === 'peerjs') {
                       if (isHostRef.current) connsRef.current.forEach(c => c.send(msg)); 
                       else if (connRef.current) connRef.current.send(msg);
+                      
+                      setUnopenedGifts(prev => {
+                          const q = prev[targetUid] || [];
+                          return { ...prev, [targetUid]: [...q, myId] };
+                      });
                   } else if (engineRef.current === 'firebase' && roomRef.current) {
                       // Firebase 模式：改用子集合 addDoc 避免覆蓋
                       addDoc(collection(roomRef.current, "events"), { ...msg, createdAt: serverTimestamp() }).catch(e => console.error(e));
-                  }
-                  
-                  if (targetUid === myId) {
-                      if (handleReceiveGiftRef.current) handleReceiveGiftRef.current(msg);
                   }
               }
           }
@@ -927,22 +919,11 @@ const lastPinchDist = useRef(null);
       const handleReceiveGiftRef = useRef();
       handleReceiveGiftRef.current = (ev) => {
           if (isSpectator) return;
-          const cells = stateRef.current.localCells; 
-          const validCells = cells.filter(c => !c.isGiven && !c.isSystemRevealed);
-          if (validCells.length === 0) return;
-
-          // 完全隨機挑選 
-          const targetCell = validCells[Math.floor(Math.random() * validCells.length)];
-          
-          revealSystemCellRef.current(targetCell.id);
-          
-          setBoardGifts(prev => [...prev, {
-              id: ev.id,
-              cellId: targetCell.id,
-              senderUid: ev.senderUid || 'system',
-              expireTime: Date.now() + 5000,
-              clicks: 0
-          }]);
+          // 將收到的禮物的 senderUid 放入目標的 unopenedGifts 佇列
+          setUnopenedGifts(prev => {
+              const currentQueue = prev[ev.targetUid] || [];
+              return { ...prev, [ev.targetUid]: [...currentQueue, ev.senderUid || 'system'] };
+          });
       };
 
       const triggerRipple = (pt) => {
@@ -992,18 +973,88 @@ const lastPinchDist = useRef(null);
           });
       };
 
-      const handleGiftClick = (e, giftId) => {
-          e.stopPropagation();
+
+      const handleOpenGift = () => {
           if (interactionMode >= 2 || matchPhase !== 'playing' || isSpectator) return;
-          setBoardGifts(prev => {
-              const gift = prev.find(g => g.id === giftId);
-              if (gift && !gift.expired) {
-                  // 一鍵直接觸發反擊
-                  triggerCounterAttack(gift.senderUid);
-                  showToast("⚔️ 拆開禮物！已將干擾送回對手！");
-                  return prev.filter(g => g.id !== giftId);
+          const myQueue = stateRef.current.unopenedGifts[myId] || [];
+          if (myQueue.length === 0) return;
+          
+          const emptyCells = stateRef.current.localCells.filter(c => !c.isGiven && !c.isSystemRevealed && c.value === null);
+          const incorrectCells = stateRef.current.localCells.filter(c => !c.isGiven && !c.isSystemRevealed && c.value !== null && solutionGridRef.current && c.value !== solutionGridRef.current[c.y][c.x]);
+          
+          const giftsToOpenCount = Math.min(myQueue.length, emptyCells.length + incorrectCells.length);
+          if (giftsToOpenCount === 0) {
+              showToast("⚠️ 盤面已無可解鎖或錯誤的空格");
+              return;
+          }
+          
+          const giftsToOpen = myQueue.slice(0, giftsToOpenCount);
+          let cellsToReveal = [];
+          
+          if (giftsToOpenCount <= emptyCells.length) {
+              cellsToReveal = [...emptyCells].sort(() => 0.5 - Math.random()).slice(0, giftsToOpenCount);
+          } else {
+              cellsToReveal = [...emptyCells];
+              const remaining = giftsToOpenCount - emptyCells.length;
+              const shuffledIncorrect = [...incorrectCells].sort(() => 0.5 - Math.random());
+              cellsToReveal.push(...shuffledIncorrect.slice(0, remaining));
+          }
+          
+          const buttonEl = document.getElementById("btn-open-gift");
+          const buttonRect = buttonEl ? buttonEl.getBoundingClientRect() : null;
+          let counterAttackCount = 0;
+          let newFlares = [];
+          
+          giftsToOpen.forEach((senderUid, index) => {
+              const targetCell = cellsToReveal[index];
+              revealSystemCellRef.current(targetCell.id);
+              
+              if (senderUid !== 'system') {
+                  setTimeout(() => { triggerCounterAttack(senderUid); }, index * 150);
+                  counterAttackCount++;
               }
-              return prev;
+              
+              if (buttonRect) {
+                  const cellEl = document.getElementById(`cell-${targetCell.id}`);
+                  if (cellEl) {
+                      const cellRect = cellEl.getBoundingClientRect();
+                      newFlares.push({
+                          id: Date.now() + '-' + index,
+                          startX: buttonRect.left + buttonRect.width / 2,
+                          startY: buttonRect.top + buttonRect.height / 2,
+                          endX: cellRect.left + cellRect.width / 2,
+                          endY: cellRect.top + cellRect.height / 2
+                      });
+                  }
+              }
+          });
+          
+          if (newFlares.length > 0) {
+              setFlares(prev => [...prev, ...newFlares]);
+              setTimeout(() => {
+                  setFlares(prev => prev.filter(f => !newFlares.find(nf => nf.id === f.id)));
+              }, 600);
+          }
+          
+          if (counterAttackCount > 0) {
+              showToast(`⚔️ 連續拆開 ${giftsToOpenCount} 個禮物！對敵人發動了 ${counterAttackCount} 次干擾反擊！`);
+          } else {
+              showToast(`🎁 連續拆開 ${giftsToOpenCount} 個系統禮物！獲得 ${giftsToOpenCount} 格提示！`);
+          }
+          
+          for(let i=0; i<giftsToOpenCount; i++){
+              const msg = { type: 'GIFT_OPENED', uid: myId, id: Math.random().toString(36).substring(2, 10), timestamp: Date.now() };
+              if (engineRef.current === 'peerjs') {
+                  if (isHostRef.current) connsRef.current.forEach(c => c.send(msg));
+                  else if (connRef.current) connRef.current.send(msg);
+              } else if (engineRef.current === 'firebase' && roomRef.current) {
+                  addDoc(collection(roomRef.current, "events"), { ...msg, createdAt: serverTimestamp() }).catch(e => console.error(e));
+              }
+          }
+          
+          setUnopenedGifts(prev => {
+              const q = prev[myId] || [];
+              return { ...prev, [myId]: q.slice(giftsToOpenCount) };
           });
       };
 
@@ -1018,7 +1069,7 @@ const lastPinchDist = useRef(null);
           if (partial.isGenerating !== undefined) {
               setIsGenerating(partial.isGenerating);
               if (partial.isGenerating) { 
-                  setIsWon(false); setWinner(null); setEndTime(null); isWinnerDeclaredRef.current = false; setBoardGifts([]); 
+                  setIsWon(false); setWinner(null); setEndTime(null); isWinnerDeclaredRef.current = false; setUnopenedGifts({}); 
                   completedRegionsRef.current.clear(); scrambledCharsRef.current.clear(); setBrawlWinners([]); 
                   // 重置觀戰狀態：房主在大亂鬥保持觀戰，其餘玩家恢復參賽
                   setIsSpectator(isHostRef.current && (partial.isBrawlMode !== undefined ? partial.isBrawlMode : stateRef.current.isBrawlMode));
@@ -1471,6 +1522,7 @@ const lastPinchDist = useRef(null);
       const clickTracker = useRef({ char: null, count: 0, time: 0 });
       const onNumClick = (e, c) => {
           e.preventDefault(); if (isAutoFillingRef.current || winner || matchPhase !== 'playing' || isSpectator) return; 
+          if (!isHeaderCollapsed) setIsHeaderCollapsed(true);
           const now = Date.now(); const tracker = clickTracker.current;
           if (tracker.char === c && now - tracker.time < 400) { tracker.count += 1; } else { tracker.char = c; tracker.count = 1; }
           tracker.time = now; const isCompleted = completedChars.has(c);
@@ -1673,7 +1725,7 @@ const lastPinchDist = useRef(null);
 
       const generateAndSync = (sId, dId, nextMode, skipLobby = false) => {
         if (isAutoFillingRef.current) return;
-        setIsGenerating(true); setWinner(null); isWinnerDeclaredRef.current = false; setGhostHints({}); setBoardGifts([]); setBrawlWinners([]);
+        setIsGenerating(true); setWinner(null); isWinnerDeclaredRef.current = false; setGhostHints({}); setUnopenedGifts({}); setBrawlWinners([]);
         
         let targetMode = nextMode;
         if (targetMode === undefined) {
@@ -1750,7 +1802,7 @@ const lastPinchDist = useRef(null);
       const switchToOffline = () => {
         if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
         setEngine('none'); engineRef.current = 'none'; setIsHost(false); isHostRef.current = false; setRoomId(""); roomRef.current = null; connsRef.current = []; connRef.current = null; setCursors({}); setRipples([]); setInteractionMode(0);
-        setIsGhostRace(false); setIsBrawlMode(false); setBrawlWinners([]); setIsSpectator(false); setLocalCells([]); solutionGridRef.current = null; setWinner(null); setGhostHints({}); isWinnerDeclaredRef.current = false; setBoardGifts([]); completedRegionsRef.current.clear(); processedEventsRef.current.clear();
+        setIsGhostRace(false); setIsBrawlMode(false); setBrawlWinners([]); setIsSpectator(false); setLocalCells([]); solutionGridRef.current = null; setWinner(null); setGhostHints({}); isWinnerDeclaredRef.current = false; setUnopenedGifts({}); completedRegionsRef.current.clear(); processedEventsRef.current.clear();
         setPlayersList([{ id: myId, name: tempPlayerName.trim() || "單機玩家", isHost: true, color: myColorRef.current, isReady: false, isSpectator: false }]);
       };
 
@@ -1763,7 +1815,7 @@ const lastPinchDist = useRef(null);
         let solution = null; // 預設進房是coop，不用算解答但如果之後預設要改這也要改
         const initLocalCells = JSON.parse(JSON.stringify(initialLevelData.cells));
         syncState({ levelData: initialLevelData, cells: initLocalCells, localCells: initLocalCells, strokes: [], startTime: Date.now(), isGenerating: false, selectedChar: null, solutionGrid: solution, matchPhase: 'playing', countdownTarget: null, giftEvents: [], keyMapping: initialLevelData.sizeDef.chars }, false);
-        setIsGenerating(false); setBoardGifts([]); completedRegionsRef.current.clear(); processedEventsRef.current.clear();
+        setIsGenerating(false); setUnopenedGifts({}); completedRegionsRef.current.clear(); processedEventsRef.current.clear();
         const rId = Math.floor(1000 + Math.random() * 9000).toString(); const finalId = stableMode ? "S" + rId : rId;
         if (stableMode) { setEngine('firebase'); engineRef.current = 'firebase'; await setupFirebase(finalId, pName, true); } 
         else { setEngine('peerjs'); engineRef.current = 'peerjs'; setupPeerJS(finalId, pName, true); }
@@ -1861,7 +1913,7 @@ const lastPinchDist = useRef(null);
               if (gs.isGenerating !== undefined) { 
                   setIsGenerating(gs.isGenerating); 
                   if (gs.isGenerating) { 
-                      setIsWon(false); setWinner(null); setEndTime(null); isWinnerDeclaredRef.current = false; setBoardGifts([]); completedRegionsRef.current.clear(); scrambledCharsRef.current.clear(); 
+                      setIsWon(false); setWinner(null); setEndTime(null); isWinnerDeclaredRef.current = false; setUnopenedGifts({}); completedRegionsRef.current.clear(); scrambledCharsRef.current.clear(); 
                       // Firebase 模式重置：房主在亂鬥維持觀戰，其他恢復
                       setIsSpectator(isHostRef.current && gs.isBrawlMode);
                   } 
@@ -1886,8 +1938,20 @@ const lastPinchDist = useRef(null);
                       const ev = change.doc.data();
                       if (!processedEventsRef.current.has(ev.id)) {
                           processedEventsRef.current.add(ev.id);
-                          if (ev.type === 'RECEIVE_GIFT' && ev.targetUid === myId) {
-                              if (handleReceiveGiftRef.current) handleReceiveGiftRef.current(ev);
+                          if (ev.type === 'RECEIVE_GIFT') {
+                              setUnopenedGifts(prev => {
+                                  const q = prev[ev.targetUid] || [];
+                                  return { ...prev, [ev.targetUid]: [...q, ev.senderUid || 'system'] };
+                              });
+                          } else if (ev.type === 'GIFT_OPENED') {
+                              if (ev.uid !== myId) {
+                                  setUnopenedGifts(prev => {
+                                      const q = prev[ev.uid] || [];
+                                      const nq = [...q];
+                                      nq.shift();
+                                      return { ...prev, [ev.uid]: nq };
+                                  });
+                              }
                           } else if (ev.type === 'GIFT_COUNTER_ATTACK' && ev.targetUid === myId) {
                               if (handleReceiveCounterAttackRef.current) handleReceiveCounterAttackRef.current();
                           } else if (ev.type === 'GHOST_I_WON' && isHostRef.current && stateRef.current.isGhostRace && !stateRef.current.winner) {
@@ -1964,7 +2028,18 @@ const lastPinchDist = useRef(null);
                   } else if (m.type === 'CLICK') { connsRef.current.forEach(conn => { if(conn.peer !== c.peer) conn.send(m); }); setRipples(prev => [...prev, { id: Date.now() + Math.random(), uid: m.uid, x: m.x, y: m.y, timestamp: Date.now() }]);
                   } else if (m.type === 'RECEIVE_GIFT') {
                       connsRef.current.forEach(conn => { if(conn.peer !== c.peer) conn.send(m); });
-                      if (m.targetUid === myId) { if (handleReceiveGiftRef.current) handleReceiveGiftRef.current(m); }
+                      setUnopenedGifts(prev => {
+                          const q = prev[m.targetUid] || [];
+                          return { ...prev, [m.targetUid]: [...q, m.senderUid || 'system'] };
+                      });
+                  } else if (m.type === 'GIFT_OPENED') {
+                      connsRef.current.forEach(conn => { if(conn.peer !== c.peer) conn.send(m); });
+                      setUnopenedGifts(prev => {
+                          const q = prev[m.uid] || [];
+                          const nq = [...q];
+                          nq.shift();
+                          return { ...prev, [m.uid]: nq };
+                      });
                   } else if (m.type === 'GIFT_COUNTER_ATTACK') {
                       connsRef.current.forEach(conn => { if(conn.peer !== c.peer) conn.send(m); });
                       if (m.targetUid === myId) { if (handleReceiveCounterAttackRef.current) handleReceiveCounterAttackRef.current(); }
@@ -1993,7 +2068,22 @@ const lastPinchDist = useRef(null);
                   else if (m.type === 'CURSOR') setCursors(prev => ({ ...prev, [m.uid]: { x: m.x, y: m.y } }));
                   else if (m.type === 'CLICK') setRipples(prev => [...prev, { id: Date.now() + Math.random(), uid: m.uid, x: m.x, y: m.y, timestamp: Date.now() }]);
                   else if (m.type === 'REQ_REJOIN') connRef.current.send({ type: 'JOIN', pName: myNameRef.current || "玩家", uid: myId, color: myColorRef.current });
-                  else if (m.type === 'RECEIVE_GIFT') { if (m.targetUid === myId) { if (handleReceiveGiftRef.current) handleReceiveGiftRef.current(m); } }
+                  else if (m.type === 'RECEIVE_GIFT') { 
+                      setUnopenedGifts(prev => {
+                          const q = prev[m.targetUid] || [];
+                          return { ...prev, [m.targetUid]: [...q, m.senderUid || 'system'] };
+                      });
+                  }
+                  else if (m.type === 'GIFT_OPENED') {
+                      if (m.uid !== myId) {
+                          setUnopenedGifts(prev => {
+                              const q = prev[m.uid] || [];
+                              const nq = [...q];
+                              nq.shift();
+                              return { ...prev, [m.uid]: nq };
+                          });
+                      }
+                  }
                   else if (m.type === 'GIFT_COUNTER_ATTACK') { if (m.targetUid === myId) { if (handleReceiveCounterAttackRef.current) handleReceiveCounterAttackRef.current(); } }
                 });
                 c.on('close', function() { showToast("⚠️ 主機已離線，切換為單機模式"); switchToOffline(); });
@@ -2115,7 +2205,7 @@ const lastPinchDist = useRef(null);
                  </div>
               </div>
             </div>
-            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.0.5)</div>
+            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.1.1)</div>
           </div>
         );
       }
@@ -2631,7 +2721,7 @@ const lastPinchDist = useRef(null);
                                 }
 
                                 return (
-                                    <g key={`cell-${cell.id}`} onClick={() => handleCellClick(cell.id)} className={interactionMode >= 2 ? 'pointer-events-none' : 'cursor-pointer group'}>
+                                    <g key={`cell-${cell.id}`} id={`cell-${cell.id}`} onClick={() => handleCellClick(cell.id)} className={interactionMode >= 2 ? 'pointer-events-none' : 'cursor-pointer group'}>
                                         <rect x={cx} y={cy} width={CELL_SIZE} height={CELL_SIZE} fill="transparent" className={interactionMode >= 2 ? '' : 'hover:fill-yellow-600/20 transition-colors'} />
 
                                         {cell.value ? (
@@ -2695,31 +2785,7 @@ const lastPinchDist = useRef(null);
                             })}
                         </g>
                         
-                        {/* 盤面實體化禮物 (覆蓋在被送禮的格子上) */}
-                        <g transform={`translate(${PADDING}, ${PADDING})`}>
-                            {boardGifts.map(gift => {
-                                const cell = activeCells.find(c => c.id === gift.cellId);
-                                if (!cell) return null;
-                                const cx = cell.x * CELL_SIZE;
-                                const cy = cell.y * CELL_SIZE;
-                                const scale = 1 + ((gift.clicks || 0) * 0.15); 
-                                return (
-                                    <g key={`gift-${gift.id}`} 
-                                       transform={`translate(${cx}, ${cy})`} 
-                                       onPointerDown={(e) => handleGiftClick(e, gift.id)} 
-                                       className="cursor-pointer"
-                                    >
-                                        <rect width={CELL_SIZE} height={CELL_SIZE} fill="#fef08a" stroke="#ca8a04" strokeWidth="3" rx="8" className="pointer-events-auto hover:brightness-95 transition-all" />
-                                        <text x={CELL_SIZE/2} y={CELL_SIZE/2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight="900" fill="#1e293b" className="select-none pointer-events-none">
-                                            {cell.value}
-                                        </text>
-                                        <text x={CELL_SIZE - 12} y="14" textAnchor="middle" dominantBaseline="central" fontSize="16" className="select-none pointer-events-none transition-transform duration-75">
-                                            🎁
-                                        </text>
-                                    </g>
-                                );
-                            })}
-                        </g>
+                        {/* 舊版盤面實體化禮物已廢除，改為右下角懸浮 UI */}
 
                         {/* 5. 最頂層：游標與橡皮擦 */}
                         <circle ref={eraserRef} r="15" fill={myCurrentColor === 'rainbow' ? undefined : myCurrentColor} fillOpacity="0.4" stroke={myCurrentColor === 'rainbow' ? undefined : myCurrentColor} strokeWidth="2" className={`pointer-events-none ${myCurrentColor === 'rainbow' ? 'rainbow-stroke rainbow-fill' : ''}`} style={{ display: 'none' }} />
@@ -2817,8 +2883,51 @@ const lastPinchDist = useRef(null);
                   <button onClick={() => setHideVictoryModal(false)} className="pointer-events-auto bg-[#ffcc00] text-[#2d2a26] border-[4px] border-[#2d2a26] px-6 py-3 rounded-full shadow-[6px_6px_0px_#2d2a26] hover:translate-y-[2px] transition-all font-black flex items-center gap-2 tracking-wide text-lg">🏆 顯示成績</button>
                 </div>
               )}
+              {screen === 'game' && matchPhase === 'playing' && !isSpectator && unopenedGifts[myId] && unopenedGifts[myId].length > 0 && (
+                <button 
+                  id="btn-open-gift"
+                  onClick={handleOpenGift}
+                  className="absolute bottom-28 right-4 md:right-8 z-[70] w-14 h-14 bg-pink-500 rounded-full border-[3px] border-[#2d2a26] shadow-[4px_4px_0px_#2d2a26] text-3xl animate-bounce hover:scale-110 active:scale-95 transition-all flex items-center justify-center p-0"
+                  title="拆開禮物 (反擊)"
+                >
+                  🎁
+                  <div className="absolute -top-2 -right-2 bg-red-500 text-white font-black text-sm w-6 h-6 flex items-center justify-center rounded-full border-2 border-[#2d2a26]">
+                      {unopenedGifts[myId].length}
+                  </div>
+                </button>
+              )}
             </div>
           </div>
+
+          {/* SVG 發射閃光彈動畫層 */}
+          {flares.length > 0 && (
+              <svg className="fixed inset-0 pointer-events-none z-[120]" style={{ width: '100vw', height: '100vh' }}>
+                  <defs>
+                      <filter id="flareGlow">
+                          <feGaussianBlur stdDeviation="3" result="blur" />
+                          <feMerge>
+                              <feMergeNode in="blur" />
+                              <feMergeNode in="SourceGraphic" />
+                          </feMerge>
+                      </filter>
+                  </defs>
+                  {flares.map(f => {
+                      const cpX = (f.startX + f.endX) / 2;
+                      const cpY = Math.min(f.startY, f.endY) - 200;
+                      const pathD = `M ${f.startX} ${f.startY} Q ${cpX} ${cpY} ${f.endX} ${f.endY}`;
+                      return (
+                          <g key={f.id}>
+                              <path d={pathD} fill="none" stroke="#fcd34d" strokeWidth="2" strokeDasharray="5,5" opacity="0.4" />
+                              <circle r="12" fill="#fff" filter="url(#flareGlow)">
+                                  <animateMotion path={pathD} dur="0.6s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.4 0 0.2 1" />
+                                  <animate attributeName="opacity" values="1;0" begin="0.5s" dur="0.1s" fill="freeze" />
+                                  <animate attributeName="r" values="8;16;0" keyTimes="0;0.8;1" dur="0.6s" fill="freeze" />
+                              </circle>
+                          </g>
+                      );
+                  })}
+              </svg>
+          )}
 
           {/* === 獨立選色/設定面板 === */}
           {colorPickerTarget && (
