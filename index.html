@@ -2115,7 +2115,7 @@ const lastPinchDist = useRef(null);
                  </div>
               </div>
             </div>
-            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.0.3)</div>
+            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.0.5)</div>
           </div>
         );
       }
@@ -2289,20 +2289,26 @@ const lastPinchDist = useRef(null);
                           <input type="checkbox" checked={brawlSettings.allowYellowHint} onChange={e => syncState({ brawlSettings: { ...brawlSettings, allowYellowHint: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
                       </label>
 
-                      <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
-                          <span>畫面使用色塊遮擋</span>
-                          <input type="checkbox" checked={brawlSettings.hideAnswers} onChange={e => syncState({ brawlSettings: { ...brawlSettings, hideAnswers: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
-                      </label>
+                      {isBrawlMode && (
+                          <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
+                              <span>畫面使用色塊遮擋</span>
+                              <input type="checkbox" checked={brawlSettings.hideAnswers} onChange={e => syncState({ brawlSettings: { ...brawlSettings, hideAnswers: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
+                          </label>
+                      )}
 
-                      <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
-                          <span>允許其他玩家按再來一局</span>
-                          <input type="checkbox" checked={brawlSettings.allowOthersToPlayAgain !== false} onChange={e => syncState({ brawlSettings: { ...brawlSettings, allowOthersToPlayAgain: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
-                      </label>
+                      {isMultiplayer && (
+                          <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
+                              <span>允許其他玩家按再來一局</span>
+                              <input type="checkbox" checked={brawlSettings.allowOthersToPlayAgain !== false} onChange={e => syncState({ brawlSettings: { ...brawlSettings, allowOthersToPlayAgain: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
+                          </label>
+                      )}
 
-                      <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
-                          <span>開啟獲得與贈送禮物功能</span>
-                          <input type="checkbox" checked={brawlSettings.allowGifts !== false} onChange={e => syncState({ brawlSettings: { ...brawlSettings, allowGifts: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
-                      </label>
+                      {isMultiplayer && (isGhostRace || isBrawlMode) && (
+                          <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
+                              <span>開啟獲得與贈送禮物功能</span>
+                              <input type="checkbox" checked={brawlSettings.allowGifts !== false} onChange={e => syncState({ brawlSettings: { ...brawlSettings, allowGifts: e.target.checked } })} className={`w-5 h-5 ${isBrawlMode ? 'accent-purple-600' : 'accent-red-600'} cursor-pointer`} />
+                          </label>
+                      )}
 
                       <button onClick={() => setShowBrawlSettings(false)} className="mt-4 px-4 py-3 bg-[#ffcc00] border-4 border-[#2d2a26] font-black rounded-xl shadow-[4px_4px_0px_#2d2a26] hover:translate-y-[2px] hover:shadow-none transition-all">關閉設定</button>
                   </div>
