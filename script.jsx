@@ -1,177 +1,4 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="數獨">
-  <title>數獨 - Sudoku</title>
-  
-  <link rel="icon" href="icon.png" type="image/png" sizes="180x180">
-  <link rel="apple-touch-icon" href="icon.png">
-  
-  <script>
-    // 抑制 noisy console warnings (Tailwind, Babel)
-    (function() {
-      const originalWarn = console.warn;
-      console.warn = function(...args) {
-        if (typeof args[0] === 'string' && (
-          args[0].includes('cdn.tailwindcss.com') || 
-          args[0].includes('You are using the in-browser Babel transformer') ||
-          args[0].includes('Source map')
-        )) return;
-        originalWarn.apply(console, args);
-      };
-      
-      const originalError = console.error;
-      console.error = function(...args) {
-        const str = args.join(' ');
-        if (str.includes('Source map') || str.includes('sourceMap')) return;
-        originalError.apply(console, args);
-      };
-    })();
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
-  <style>
-    body {
-      overscroll-behavior-y: none;
-      background-color: #fdf5e6; 
-      background-image: radial-gradient(#d3c5ab 2px, transparent 2px); 
-      background-size: 12px 12px; 
-      margin: 0; padding: 0;
-      font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang TC', 'Heiti TC', 'Microsoft JhengHei', sans-serif;
-    }
-    
-    /* 隱藏滾動條但保持可滾動 */
-    .hide-scrollbar::-webkit-scrollbar { display: none; }
-    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
-    .animate-fadeIn { animation: fadeIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-    
-    @keyframes slideUpFade { 0% { transform: translate(-50%, 20px); opacity: 0; } 100% { transform: translate(-50%, 0); opacity: 1; } }
-    .animate-slideUpFade { animation: slideUpFade 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-    
-    @keyframes popUpCenter { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-    .animate-popUpCenter { animation: popUpCenter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-    
-    @keyframes popOutCenter { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(0.8); opacity: 0; } }
-    .animate-popOutCenter { animation: popOutCenter 0.3s ease-in forwards; }
-    
-    @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-    .animate-fadeOut { animation: fadeOut 0.3s ease-in forwards; }
-    
-    @keyframes rippleAnim { 0% { transform: scale(0.1); opacity: 0.8; stroke-width: 6px; } 100% { transform: scale(3); opacity: 0; stroke-width: 2px; } }
-    @keyframes dotAnim { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } 100% { content: ''; } }
-    .animate-loading-dots::after { content: ''; animation: dotAnim 1.5s infinite; }
-
-    @keyframes ghostPulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
-    .ghost-highlight { animation: ghostPulse 1.5s ease-in-out infinite; }
-    
-    @keyframes giftPop {
-        0% { transform: scale(0) translateY(-20px); opacity: 0; }
-        60% { transform: scale(1.1) translateY(5px); opacity: 1; filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.8)); }
-        100% { transform: scale(1) translateY(0); opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 215, 0, 0.5)); }
-    }
-    .anim-gift {
-        animation: giftPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-    }
-    
-    /* 按鍵翻轉對調動畫 */
-    @keyframes keyFlip {
-        0% { transform: perspective(400px) rotateY(0); }
-        50% { transform: perspective(400px) rotateY(90deg); background-color: #ef4444; color: white; opacity: 0.8; }
-        100% { transform: perspective(400px) rotateY(0); }
-    }
-    .anim-key-flip {
-        animation: keyFlip 0.6s ease-in-out forwards;
-    }
-
-    /* 水球噴濺入場動畫 */
-    @keyframes splatIn {
-        0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
-        55%  { transform: scale(1.15) rotate(5deg); opacity: 1; }
-        78%  { transform: scale(0.95) rotate(-2deg); opacity: 1; }
-        100% { transform: scale(1) rotate(0deg); opacity: 1; }
-    }
-    /* 水球霧化特效：顯示10秒，最後漸變透明消失 */
-    @keyframes fogFade {
-        0%   { opacity: 0; transform: scale(0.5); }
-        3%   { opacity: 1; transform: scale(1); }
-        90%  { opacity: 1; }
-        100% { opacity: 0; }
-    }
-    /* 橡皮擦特效：顯示0.5秒後往上且變透明 */
-    @keyframes eraseFade {
-        0%   { opacity: 1; transform: translateY(0); }
-        90%  { opacity: 0; transform: translateY(-15px); }
-        100% { opacity: 0; transform: translateY(-15px); }
-    }
-    /* 武器按鈕浮動 */
-    @keyframes weaponFloat {
-        0%, 100% { transform: translateY(0); }
-        50%       { transform: translateY(-4px); }
-    }
-    .anim-weapon { animation: weaponFloat 2s ease-in-out infinite; }
-
-    @keyframes rainbowStopAnim {
-      0%{stop-color:#E3002B;} 5%{stop-color:#F35B00;} 10%{stop-color:#FFC90E;} 15%{stop-color:#D7157A;} 20%{stop-color:#E895C0;} 25%{stop-color:#007A61;} 30%{stop-color:#87D300;} 35%{stop-color:#C4D600;} 40%{stop-color:#8DD1BF;} 45%{stop-color:#616130;} 50%{stop-color:#00538A;} 55%{stop-color:#008CC1;} 60%{stop-color:#00C1D5;} 65%{stop-color:#79C8ED;} 70%{stop-color:#CDBB79;} 75%{stop-color:#41136A;} 80%{stop-color:#935CB9;} 85%{stop-color:#BCA8D1;} 90%{stop-color:#7A0026;} 95%{stop-color:#BC7B70;} 100%{stop-color:#E3002B;}
-    }
-    .rainbow-stop { animation: rainbowStopAnim 20s linear infinite; }
-    .rainbow-stroke { stroke: url(#rainbowGrad) !important; }
-    .rainbow-fill { fill: url(#rainbowGrad) !important; }
-
-    .key-btn { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s, box-shadow 0.2s; backface-visibility: hidden; }
-
-    .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; }
-    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-left: 2px solid #1e293b; border-top: 2px solid #1e293b; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border: 2px solid #1e293b; border-radius: 6px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-  </style>
-</head>
-<body>
-<script>
-window.addEventListener('error', function(e) {
-  if (e.message === 'Script error.' && e.lineno === 0) return;
-  var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;background:red;color:white;width:100%;height:100%;padding:20px;font-size:24px;overflow:auto;word-wrap:break-word;white-space:pre-wrap;text-align:left;line-height:1.5;';
-  d.innerHTML = '<h2>Application Error</h2>' + String(e.message) + '<br/>At ' + e.filename + ':' + e.lineno + '<br/><br/><pre>' + (e.error ? e.error.stack : '') + '</pre>';
-  document.body.appendChild(d);
-});
-var oldErr = console.error;
-console.error = function() {
-  oldErr.apply(console, arguments);
-  var str = Array.from(arguments).map(String).join(" ");
-  if (str.includes("SyntaxError") && !str.includes("Babel") && !str.includes("Warning")) {
-    var d = document.createElement('div');
-    d.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;background:red;color:white;width:100%;height:100%;padding:20px;font-size:20px;overflow:auto;word-wrap:break-word;white-space:pre-wrap;text-align:left;font-family:monospace;';
-    d.innerHTML = '<h2>Console Error</h2>' + encodeURIComponent(str).replace(/%[A-Z0-9]{2}/g, function() {return" "});
-    document.body.appendChild(d);
-  }
-};
-</script>
-
-  <div id="root"></div>
-
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, collection, addDoc, deleteDoc, runTransaction, arrayUnion, arrayRemove, query, orderBy, limit, serverTimestamp, where, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
- 
-      window.firebaseAPI = {
-        initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken,
-        getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, collection, addDoc, deleteDoc, runTransaction, arrayUnion, arrayRemove, query, orderBy, limit, serverTimestamp, where, getDocs, writeBatch
-      };
-      window.dispatchEvent(new Event('firebase-ready'));
-  </script>
-
-  <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
     
     // 全局變數宣告
@@ -463,7 +290,7 @@ console.error = function() {
       // === 道具系統：水球霧化 + 格子清除 ===
       const [myWeapons, setMyWeapons] = useState([]);         // ['balloon','eraser',...]
       const [foggedBoxes, setFoggedBoxes] = useState({});     // { boxId: expiryTimestamp }
-      const [erasingCells, setErasingCells] = useState({});   // { cellId: { value, timestamp } }
+      const [showWeaponTargetPicker, setShowWeaponTargetPicker] = useState(null); // null|'balloon'|'eraser'
       const lastMilestoneRef = useRef(0);    // 已跨越的 10% 里程碑數量（0~9）
 
       const processedEventsRef = useRef(new Set());
@@ -974,21 +801,6 @@ const lastPinchDist = useRef(null);
           return () => clearInterval(ticker);
       }, [foggedBoxes]);
 
-      // 清除特效清理 ticker：每 500ms 清理超過 1 秒的 erasingCells
-      useEffect(() => {
-          if (Object.keys(erasingCells).length === 0) return;
-          const ticker = setInterval(() => {
-              const now = Date.now();
-              setErasingCells(prev => {
-                  const next = { ...prev };
-                  let changed = false;
-                  Object.keys(next).forEach(k => { if (now - next[k].timestamp > 1000) { delete next[k]; changed = true; } });
-                  return changed ? next : prev;
-              });
-          }, 500);
-          return () => clearInterval(ticker);
-      }, [erasingCells]);
-
       const revealSystemCellRef = useRef();
       revealSystemCellRef.current = (cellId) => {
           setLocalCells(prev => {
@@ -1190,13 +1002,6 @@ const lastPinchDist = useRef(null);
               return;
           }
           const target = correctCells[Math.floor(Math.random() * correctCells.length)];
-          
-          // 寫入 erasingCells 記錄發動特效
-          setErasingCells(prev => ({
-              ...prev,
-              [target.id]: { value: target.value, timestamp: Date.now() }
-          }));
-
           // 清除該格
           setLocalCells(prev => {
               const next = prev.map(c => c.id === target.id ? { ...c, value: null, drafts: [], owner: null } : c);
@@ -1216,44 +1021,10 @@ const lastPinchDist = useRef(null);
       };
 
       // 玩家主動使用道具：廣播攻擊
-      const handleUseWeapon = (weaponType) => {
+      const handleUseWeapon = (weaponType, targetUid) => {
           if (stateRef.current.myWeapons.length === 0) return;
           const idx = stateRef.current.myWeapons.indexOf(weaponType);
           if (idx === -1) return;
-
-          // 自動選擇攻擊目標（優先打比自己強的）
-          const giftsData = stateRef.current.unopenedGifts || {};
-          const hintsData = stateRef.current.ghostHints || {};
-          const validPlayers = playersListRef.current.filter(p => !p.isSpectator && p.id !== myId && !stateRef.current.brawlWinners.some(w => w.id === p.id));
-          
-          if (validPlayers.length === 0) {
-              showToast("😅 目前沒有可以攻擊的對手");
-              return;
-          }
-
-          let myScore = Object.values(hintsData).filter(h => h && h[myId]).length + (giftsData[myId] ? giftsData[myId].length : 0);
-          
-          const strongerPlayers = validPlayers.filter(p => {
-              const pScore = Object.values(hintsData).filter(h => h && h[p.id]).length + (giftsData[p.id] ? giftsData[p.id].length : 0);
-              return pScore > myScore;
-          });
-          
-          let targetUid;
-          if (strongerPlayers.length === 0) {
-              targetUid = validPlayers[Math.floor(Math.random() * validPlayers.length)].id;
-          } else {
-              const weights = strongerPlayers.map(p => {
-                  const pScore = Object.values(hintsData).filter(h => h && h[p.id]).length + (giftsData[p.id] ? giftsData[p.id].length : 0);
-                  return Math.sqrt(pScore - myScore);
-              });
-              const totalWeight = weights.reduce((a, b) => a + b, 0);
-              let rand = Math.random() * totalWeight;
-              targetUid = strongerPlayers[strongerPlayers.length - 1].id;
-              for (let i = 0; i < strongerPlayers.length; i++) {
-                  rand -= weights[i];
-                  if (rand <= 0) { targetUid = strongerPlayers[i].id; break; }
-              }
-          }
 
           // 移除已使用的道具
           setMyWeapons(prev => {
@@ -1262,12 +1033,11 @@ const lastPinchDist = useRef(null);
               stateRef.current.myWeapons = next;
               return next;
           });
+          setShowWeaponTargetPicker(null);
 
           const hitType = weaponType === 'balloon' ? 'WEAPON_HIT_FOG' : 'WEAPON_HIT_ERASE';
           const wMsg = { type: hitType, targetUid, senderUid: myId, id: Math.random().toString(36).substring(2, 10), timestamp: Date.now() };
-          
-          const sObj = playersListRef.current.find(p => p.id === myId);
-          const senderName = sObj ? sObj.name : '某人';
+          const senderName = playersListRef.current.find(p => p.id === myId)?.name || '某人';
 
           if (engineRef.current === 'peerjs') {
               if (isHostRef.current) connsRef.current.forEach(c => c.send(wMsg));
@@ -1281,8 +1051,7 @@ const lastPinchDist = useRef(null);
               addDoc(collection(roomRef.current, "events"), { ...wMsg, createdAt: serverTimestamp() }).catch(e => console.error(e));
           }
 
-          const tObj = playersListRef.current.find(p => p.id === targetUid);
-          const targetName = tObj ? tObj.name : '對手';
+          const targetName = playersListRef.current.find(p => p.id === targetUid)?.name || '對手';
           const emoji = weaponType === 'balloon' ? '💧' : '🧹';
           showToast(`${emoji} 向 ${targetName} 發射了攻擊！`);
       };
@@ -2540,7 +2309,7 @@ const lastPinchDist = useRef(null);
                  </div>
               </div>
             </div>
-            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.3.0)</div>
+            <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.2.0)</div>
           </div>
         );
       }
@@ -3080,17 +2849,6 @@ const lastPinchDist = useRef(null);
                                     <g key={`cell-${cell.id}`} id={`cell-${cell.id}`} onClick={() => handleCellClick(cell.id)} className={interactionMode >= 2 ? 'pointer-events-none' : 'cursor-pointer group'}>
                                         <rect x={cx} y={cy} width={CELL_SIZE} height={CELL_SIZE} fill="transparent" className={interactionMode >= 2 ? '' : 'hover:fill-yellow-600/20 transition-colors'} />
 
-                                        {erasingCells[cell.id] && (
-                                            <g className="pointer-events-none select-none" style={{ animation: 'eraseFade 0.5s ease-in forwards' }}>
-                                                <text x={cx + CELL_SIZE/2} y={cy + CELL_SIZE/2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight="bold" fill={isRainbow ? undefined : valColor} className={isRainbow ? 'rainbow-fill' : ''}>
-                                                    {erasingCells[cell.id].value}
-                                                </text>
-                                                <text x={cx + CELL_SIZE/2 + 10} y={cy + CELL_SIZE/2 - 10} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.4}>
-                                                    🧹
-                                                </text>
-                                            </g>
-                                        )}
-
                                         {cell.value ? (
                                             <text x={cx + CELL_SIZE/2} y={cy + CELL_SIZE/2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight={cell.isGiven || cell.isSystemRevealed ? "900" : "bold"} fill={isRainbow ? undefined : valColor} className={`pointer-events-none select-none ${isRainbow ? 'rainbow-fill' : ''}`}>
                                                 {cell.value}
@@ -3167,10 +2925,29 @@ const lastPinchDist = useRef(null);
                             const isExpiring = remaining < 3000; // 快消失時閃爍
                             return (
                                 <g key={`fog-${boxId}`} className="pointer-events-none">
+                                    {/* 顏料底層 */}
+                                    <rect x={bx} y={by} width={bw} height={bh}
+                                        fill="url(#fogGrad)"
+                                        rx="4"
+                                        style={{
+                                            opacity: 0.88,
+                                            animation: isExpiring
+                                                ? 'fogCountdown 0.8s ease-in-out infinite'
+                                                : 'splatIn 0.5s cubic-bezier(0.175,0.885,0.32,1.275) forwards'
+                                        }}
+                                    />
+                                    {/* 顏料水花裝飾 emoji */}
                                     <text x={bx + bw/2} y={by + bh/2 + 4} textAnchor="middle" dominantBaseline="central"
-                                        fontSize={Math.min(bw, bh) * 0.9}
-                                        style={{ animation: 'fogFade 10s ease-in-out forwards', userSelect: 'none', transformOrigin: `${bx + bw/2}px ${by + bh/2}px` }}>
-                                        🫟
+                                        fontSize={Math.min(bw, bh) * 0.45}
+                                        style={{ animation: 'splatIn 0.5s cubic-bezier(0.175,0.885,0.32,1.275) forwards', userSelect: 'none' }}>
+                                        💧
+                                    </text>
+                                    {/* 倒數秒數顯示 */}
+                                    <text x={bx + bw - 6} y={by + 16} textAnchor="end" dominantBaseline="central"
+                                        fontSize="14" fontWeight="900" fill="white"
+                                        stroke="rgba(0,0,0,0.5)" strokeWidth="3" paintOrder="stroke"
+                                        className="pointer-events-none select-none">
+                                        {Math.ceil(remaining / 1000)}s
                                     </text>
                                 </g>
                             );
@@ -3272,16 +3049,49 @@ const lastPinchDist = useRef(null);
                   <button onClick={() => setHideVictoryModal(false)} className="pointer-events-auto bg-[#ffcc00] text-[#2d2a26] border-[4px] border-[#2d2a26] px-6 py-3 rounded-full shadow-[6px_6px_0px_#2d2a26] hover:translate-y-[2px] transition-all font-black flex items-center gap-2 tracking-wide text-lg">🏆 顯示成績</button>
                 </div>
               )}
-              
+              {/* === 道具選人 Popup === */}
+              {showWeaponTargetPicker && screen === 'game' && !isSpectator && (
+                <div className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm flex items-end justify-end p-4 md:p-8" onClick={() => setShowWeaponTargetPicker(null)}>
+                  <div className="bg-[#fffdfa] border-4 border-[#2d2a26] rounded-2xl p-4 shadow-[8px_8px_0px_#2d2a26] w-full max-w-xs animate-popUpCenter mb-20 mr-0 md:mr-4" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-3 border-b-2 border-[#2d2a26] pb-2">
+                      <h3 className="text-base font-black text-[#2d2a26] flex items-center gap-2">
+                        {showWeaponTargetPicker === 'balloon' ? '💧 水球霧化' : '🧹 格子清除'}
+                        <span className="text-xs font-normal text-slate-500">選擇攻擊目標</span>
+                      </h3>
+                      <button onClick={() => setShowWeaponTargetPicker(null)} className="text-slate-400 hover:text-slate-800 font-black text-lg leading-none">✕</button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {playersList.filter(p => !p.isSpectator && p.id !== myId && !brawlWinners.some(w => w.id === p.id)).map(p => {
+                        const pct = ghostProgress[p.id] || 0;
+                        const isStronger = pct > (ghostProgress[myId] || 0);
+                        return (
+                          <button key={p.id}
+                            onClick={() => handleUseWeapon(showWeaponTargetPicker, p.id)}
+                            className={`flex items-center gap-3 p-2 rounded-xl border-2 font-black text-left transition-all hover:scale-105 active:scale-95 ${isStronger ? 'border-red-500 bg-red-50 hover:bg-red-100' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}
+                          >
+                            <span className="w-4 h-4 rounded-full shrink-0 border-2 border-slate-800" style={{backgroundColor: p.color === 'rainbow' ? '#ffcc00' : p.color}}></span>
+                            <span className="flex-1 text-sm text-[#2d2a26] truncate">{p.name}{p.isHost ? ' 👑' : ''}</span>
+                            <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${isStronger ? 'bg-red-200 text-red-800 border-red-400' : 'bg-slate-200 text-slate-600 border-slate-300'}`}>{pct}%</span>
+                          </button>
+                        );
+                      })}
+                      {playersList.filter(p => !p.isSpectator && p.id !== myId && !brawlWinners.some(w => w.id === p.id)).length === 0 && (
+                        <p className="text-slate-400 text-sm text-center py-2">😅 沒有可以攻擊的對手</p>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 text-center mt-3 font-bold">紅框 = 比你強的對手，攻擊效果更有意義！</p>
+                  </div>
+                </div>
+              )}
 
-              {/* === 道具按鈕群組（移至正下方橫向排列）=== */}
+              {/* === 道具按鈕群組（在禮物按鈕上方堆疊）=== */}
               {screen === 'game' && matchPhase === 'playing' && !isSpectator && isGhostRace && myWeapons.length > 0 && (
-                  <div className="fixed bottom-6 md:bottom-12 left-1/2 -translate-x-1/2 z-[70] flex flex-row gap-4 items-center">
+                  <div className={`absolute ${unopenedGifts[myId] && unopenedGifts[myId].length > 0 ? 'bottom-48' : 'bottom-32'} right-4 md:right-8 z-[70] flex flex-col gap-2 items-center`}>
                     {myWeapons.filter(w => w === 'balloon').length > 0 && (
                       <button
-                        onClick={() => handleUseWeapon('balloon')}
-                        className="relative w-14 h-14 md:w-16 md:h-16 rounded-full border-[3px] border-[#2d2a26] shadow-[4px_4px_0px_#2d2a26] text-3xl md:text-4xl anim-weapon hover:scale-110 active:scale-95 transition-all flex items-center justify-center bg-violet-500"
-                        title="💧 水球霧化 - 隨機讓比你強的對手宮格 10 秒看不見"
+                        onClick={() => setShowWeaponTargetPicker(prev => prev === 'balloon' ? null : 'balloon')}
+                        className={`relative w-12 h-12 rounded-full border-[3px] border-[#2d2a26] shadow-[3px_3px_0px_#2d2a26] text-2xl anim-weapon hover:scale-110 active:scale-95 transition-all flex items-center justify-center ${showWeaponTargetPicker === 'balloon' ? 'bg-purple-400 scale-110' : 'bg-violet-500'}`}
+                        title="💧 水球霧化 - 讓對手宮格 10 秒看不見"
                       >
                         💧
                         {myWeapons.filter(w => w === 'balloon').length > 1 && (
@@ -3293,9 +3103,9 @@ const lastPinchDist = useRef(null);
                     )}
                     {myWeapons.filter(w => w === 'eraser').length > 0 && (
                       <button
-                        onClick={() => handleUseWeapon('eraser')}
-                        className="relative w-14 h-14 md:w-16 md:h-16 rounded-full border-[3px] border-[#2d2a26] shadow-[4px_4px_0px_#2d2a26] text-3xl md:text-4xl anim-weapon hover:scale-110 active:scale-95 transition-all flex items-center justify-center bg-orange-500"
-                        title="🧹 格子清除 - 隨機清除比你強的對手一格正確答案"
+                        onClick={() => setShowWeaponTargetPicker(prev => prev === 'eraser' ? null : 'eraser')}
+                        className={`relative w-12 h-12 rounded-full border-[3px] border-[#2d2a26] shadow-[3px_3px_0px_#2d2a26] text-2xl anim-weapon hover:scale-110 active:scale-95 transition-all flex items-center justify-center ${showWeaponTargetPicker === 'eraser' ? 'bg-orange-400 scale-110' : 'bg-orange-500'}`}
+                        title="🧹 格子清除 - 清除對手一格正確答案"
                         style={{animationDelay: '0.3s'}}
                       >
                         🧹
@@ -3432,6 +3242,4 @@ const lastPinchDist = useRef(null);
         renderApp();
       });
     }
-  </script>
-</body>
-</html>
+  
