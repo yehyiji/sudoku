@@ -1,0 +1,14 @@
+import asyncio
+from pyppeteer import launch
+
+async def main():
+    browser = await launch(headless=True, executablePath='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+    page = await browser.newPage()
+    
+    page.on('console', lambda msg: print(f"LOG: {msg.text}"))
+    page.on('pageerror', lambda err: print(f"ERR: {err}"))
+    
+    await page.goto('http://localhost:3000/?v=4', {'waitUntil': 'networkidle0'})
+    await browser.close()
+
+asyncio.get_event_loop().run_until_complete(main())
