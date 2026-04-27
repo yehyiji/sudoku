@@ -784,7 +784,9 @@
             const modeIcons = ['🖋️', '✏️', '🖌️'];
             const modeTitles = ['填答模式', '草稿模式', '畫筆作記號'];
 
-            const [zoomModeIdx, setZoomModeIdx] = useState(0);
+            const [zoomModeIdx, setZoomModeIdx] = useState(3);
+            const [zoomIndicator, setZoomIndicator] = useState({ value: 1.0, visible: false });
+            const zoomIndicatorTimer = useRef(null);
             const [isClosingModal, setIsClosingModal] = useState(false);
             
             // --- 漂浮選單分身術 (Zoom 與 Mode 獨立系統) ---
@@ -892,7 +894,7 @@
             };
 
             const zoomLevelRef = useRef(1);
-            const zoomModeIdxRef = useRef(0);
+            const zoomModeIdxRef = useRef(3);
             const currentPathDataRef = useRef("");
             const drawingPathRef = useRef(null);
             const eraserRef = useRef(null);
@@ -1319,6 +1321,7 @@
                             if (svgW * newZoom > MAX_SAFE_DIMENSION || svgH * newZoom > MAX_SAFE_DIMENSION) newZoom = Math.min(MAX_SAFE_DIMENSION / svgW, MAX_SAFE_DIMENSION / svgH);
                             zoomLevelRef.current = newZoom; if (svgRef.current) { svgRef.current.style.width = `${svgW * newZoom}px`; svgRef.current.style.height = `${svgH * newZoom}px`; }
                             if (zoomModeIdxRef.current !== 0) { setZoomModeIdx(0); zoomModeIdxRef.current = 0; }
+                            showZoomIndicator(newZoom);
                         }
                         lastPinchDist.current = dist;
                     } else if (e.touches.length === 1 && touchStartY !== null) {
@@ -1500,7 +1503,7 @@
                     const gap = triggererPct - getEffPct(p.id);
                     const prob = Math.min(0.85, Math.sqrt(gap + 1) / (weakerCandidates.length + 2));
                     if (Math.random() < prob) {
-                        // 道具上限 3 個
+                        // 道具上限：每種各 3 個
                         const curWeapons = stateRef.current.myWeapons || [];
                         // （注意：這裡 myWeapons 是自己的，不是目標的；主機只能廣播給目標）
                         const weaponType = Math.random() < 0.5 ? 'balloon' : 'eraser';
@@ -1511,7 +1514,7 @@
                             connsRef.current.forEach(c => c.send(wMsg));
                             // 如果目標是主機自己（主機玩家）
                             if (p.id === myId) {
-                                setMyWeapons(prev => prev.length >= 3 ? prev : [...prev, weaponType]);
+                                setMyWeapons(prev => prev.filter(w => w === weaponType).length >= 3 ? prev : [...prev, weaponType]);
                             }
                         } else if (engineRef.current === 'firebase' && roomRef.current) {
                             addDoc(collection(roomRef.current, "events"), { ...wMsg, createdAt: serverTimestamp() }).catch(e => console.error(e));
@@ -1520,12 +1523,12 @@
                 });
             };
 
-            // 接收道具：加入自己的道具庫（上限 3 個）
+            // 接收道具：各項道具上限 3 個
             const handleReceiveWeaponRef = useRef();
             handleReceiveWeaponRef.current = (ev) => {
                 if (ev.targetUid !== myId || isSpectator) return;
                 setMyWeapons(prev => {
-                    if (prev.length >= 3) return prev; // 已達上限
+                    if (prev.filter(w => w === ev.weaponType).length >= 3) return prev; // 該項已達上限
                     const weaponName = ev.weaponType === 'balloon' ? '💧 水球' : '🧹 橡皮擦';
                     showToast(`🎯 獲得道具：${weaponName}！點擊道具按鈕攻擊對手！`);
                     return [...prev, ev.weaponType];
@@ -2308,16 +2311,49 @@
                 } catch (e) { showToast("⚠️ 讀檔失敗！"); }
             };
 
-            const handleZoomIn = () => { if (isSpectator) return; let nz = Math.min(zoomLevelRef.current + 0.3, 3.5); if (svgW * nz > MAX_SAFE_DIMENSION || svgH * nz > MAX_SAFE_DIMENSION) nz = Math.min(MAX_SAFE_DIMENSION / svgW, MAX_SAFE_DIMENSION / svgH); zoomLevelRef.current = nz; setZoomLevel(nz); setZoomModeIdx(0); zoomModeIdxRef.current = 0; if (svgRef.current) { svgRef.current.style.width = `${svgW * nz}px`; svgRef.current.style.height = `${svgH * nz}px`; } };
-            const handleZoomOut = () => { if (isSpectator) return; let nz = Math.max(zoomLevelRef.current - 0.3, 0.4); zoomLevelRef.current = nz; setZoomLevel(nz); setZoomModeIdx(0); zoomModeIdxRef.current = 0; if (svgRef.current) { svgRef.current.style.width = `${svgW * nz}px`; svgRef.current.style.height = `${svgH * nz}px`; } };
+            const showZoomIndicator = (val) => {
+                setZoomIndicator({ value: val, visible: true });
+                if (zoomIndicatorTimer.current) clearTimeout(zoomIndicatorTimer.current);
+                zoomIndicatorTimer.current = setTimeout(() => setZoomIndicator(prev => ({ ...prev, visible: false })), 1200);
+            };
+
+            const recalculateZoom = (ni) => {
+                if (isSpectator) return;
+                const c = zoomContainerRef.current; if (!c) return;
+                const pf = 0.95; const cw = c.clientWidth; const ch = c.clientHeight;
+                let nz = 1;
+                if (ni === 0) nz = 1;
+                else if (ni === 1) nz = (cw / svgW) * pf;
+                else if (ni === 2) nz = (ch / svgH) * pf;
+                else nz = Math.min(cw / svgW, ch / svgH) * pf;
+
+                nz = Math.min(Math.max(nz, 0.2), 3.5);
+                if (svgW * nz > MAX_SAFE_DIMENSION || svgH * nz > MAX_SAFE_DIMENSION)
+                    nz = Math.min(MAX_SAFE_DIMENSION / svgW, MAX_SAFE_DIMENSION / svgH);
+
+                zoomLevelRef.current = nz;
+                setZoomLevel(nz);
+                if (svgRef.current) {
+                    svgRef.current.style.width = `${svgW * nz}px`;
+                    svgRef.current.style.height = `${svgH * nz}px`;
+                }
+                showZoomIndicator(nz);
+            };
+
+            const handleZoomIn = () => { if (isSpectator) return; let nz = Math.min(zoomLevelRef.current + 0.3, 3.5); if (svgW * nz > MAX_SAFE_DIMENSION || svgH * nz > MAX_SAFE_DIMENSION) nz = Math.min(MAX_SAFE_DIMENSION / svgW, MAX_SAFE_DIMENSION / svgH); zoomLevelRef.current = nz; setZoomLevel(nz); setZoomModeIdx(0); zoomModeIdxRef.current = 0; if (svgRef.current) { svgRef.current.style.width = `${svgW * nz}px`; svgRef.current.style.height = `${svgH * nz}px`; } showZoomIndicator(nz); };
+            const handleZoomOut = () => { if (isSpectator) return; let nz = Math.max(zoomLevelRef.current - 0.3, 0.4); zoomLevelRef.current = nz; setZoomLevel(nz); setZoomModeIdx(0); zoomModeIdxRef.current = 0; if (svgRef.current) { svgRef.current.style.width = `${svgW * nz}px`; svgRef.current.style.height = `${svgH * nz}px`; } showZoomIndicator(nz); };
             const handleCycleZoom = () => {
                 if (isSpectator) return;
                 const ni = (zoomModeIdxRef.current + 1) % 4; setZoomModeIdx(ni); zoomModeIdxRef.current = ni;
-                const c = zoomContainerRef.current; if (!c) return; const pf = 0.95; const cw = c.clientWidth; const ch = c.clientHeight;
-                let nz = 1; if (ni === 0) nz = 1; else if (ni === 1) nz = (cw / svgW) * pf; else if (ni === 2) nz = (ch / svgH) * pf; else nz = Math.min(cw / svgW, ch / svgH) * pf;
-                nz = Math.min(Math.max(nz, 0.2), 3.5); if (svgW * nz > MAX_SAFE_DIMENSION || svgH * nz > MAX_SAFE_DIMENSION) nz = Math.min(MAX_SAFE_DIMENSION / svgW, MAX_SAFE_DIMENSION / svgH);
-                zoomLevelRef.current = nz; setZoomLevel(nz); if (svgRef.current) { svgRef.current.style.width = `${svgW * nz}px`; svgRef.current.style.height = `${svgH * nz}px`; }
+                recalculateZoom(ni);
             };
+
+            useEffect(() => {
+                if (screen === 'game' && levelData && levelData.cells.length > 0) {
+                    const tid = setTimeout(() => recalculateZoom(zoomModeIdxRef.current), 100);
+                    return () => clearTimeout(tid);
+                }
+            }, [levelData, screen]);
 
             const handleCellClick = (cellId) => {
                 if (isLongPressTriggered.current) return; // 防長按後觸發點擊
@@ -2919,7 +2955,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.5.1)</div>
+                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.6.9)</div>
                     </div>
                 );
             }
@@ -3258,7 +3294,7 @@
 
                         {!isHeaderCollapsed && (
                             <div className="h-6 md:h-8 shrink-0 flex items-center justify-center bg-slate-800 text-white border-b-4 border-slate-800 relative z-30 font-bold tracking-wide">
-                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；向下滑動畫布可自動收合選單。 (v3.5.1)</span>
+                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；下方工具列可切換模式與縮放。 (v3.6.0)</span>
                                 <span className="text-[10px] md:text-sm md:hidden">點選上方數字再點擊方格。支援雙指縮放與平移。</span>
                             </div>
                         )}
@@ -3344,7 +3380,7 @@
                                         </div>
                                     )
                                 ) : (
-                                    <div className="flex justify-center items-center min-w-max min-h-max m-auto pb-10 pr-20">
+                                    <div className="flex justify-center items-center min-w-max min-h-max m-auto pb-32 pr-20">
                                         <svg
                                             ref={svgRef}
                                             onPointerMove={handlePointerMove}
@@ -3502,32 +3538,7 @@
 
                                             {/* 舊版盤面實體化禮物已廢除，改為右下角懸浮 UI */}
 
-                                            {/* 6. 霧化遮罩層：水球砸到的宮格顯示顏料遮罩 10 秒 */}
-                                            {isGhostRace && Object.entries(foggedBoxes).map(([boxIdStr, expiry]) => {
-                                                const boxId = parseInt(boxIdStr);
-                                                const boxRow = Math.floor(boxId / (cSizeDef.size / cSizeDef.boxH));
-                                                const boxCol = boxId % (cSizeDef.size / cSizeDef.boxW);
-                                                const bx = boxCol * cSizeDef.boxW * CELL_SIZE;
-                                                const by = boxRow * cSizeDef.boxH * CELL_SIZE;
-                                                const bw = cSizeDef.boxW * CELL_SIZE;
-                                                const bh = cSizeDef.boxH * CELL_SIZE;
-                                                const remaining = Math.max(0, expiry - Date.now());
-                                                const isExpiring = remaining < 3000; // 快消失時閃爍
-                                                return (
-                                                    <g key={`fog-${boxId}`} className="pointer-events-none">
-                                                        <text x={bx + bw / 2} y={by + bh / 2} textAnchor="middle" dominantBaseline="central"
-                                                            fontSize={Math.min(bw, bh) * 1.3}
-                                                            style={{
-                                                                animation: 'fogFade 10s ease-in-out forwards',
-                                                                userSelect: 'none',
-                                                                transformOrigin: 'center',
-                                                                transformBox: 'fill-box'
-                                                            }}>
-                                                            🫟
-                                                        </text>
-                                                    </g>
-                                                );
-                                            })}
+
 
                                             {/* 5. 最頂層：游標與橡皮擦 */}
                                             <circle ref={eraserRef} r="15" fill={myCurrentColor === 'rainbow' ? undefined : myCurrentColor} fillOpacity="0.4" stroke={myCurrentColor === 'rainbow' ? undefined : myCurrentColor} strokeWidth="2" className={`pointer-events-none ${myCurrentColor === 'rainbow' ? 'rainbow-stroke rainbow-fill' : ''}`} style={{ display: 'none' }} />
@@ -3548,6 +3559,27 @@
                                                 const player = playersList.find(p => p.id === r.uid); const color = player ? player.color : '#3b82f6'; const isRainbow = color === 'rainbow';
                                                 return <circle key={r.id} cx={r.x} cy={r.y} r="20" fill="none" stroke={isRainbow ? undefined : color} className={`pointer-events-none ${isRainbow ? 'rainbow-stroke' : ''}`} style={{ transformOrigin: `${r.x}px ${r.y}px`, animation: 'rippleAnim 0.8s ease-out forwards' }} />;
                                             })}
+                                            {/* 6. 霧化遮罩層：水球砸到的宮格顯示顏料遮罩 10 秒 (移至最頂層) */}
+                                            <g transform={`translate(${PADDING}, ${PADDING})`}>
+                                                {isGhostRace && Object.entries(foggedBoxes).map(([boxIdStr, expiry]) => {
+                                                    const boxId = parseInt(boxIdStr);
+                                                    const boxRow = Math.floor(boxId / (cSizeDef.size / cSizeDef.boxH));
+                                                    const boxCol = boxId % (cSizeDef.size / cSizeDef.boxW);
+                                                    const bx = boxCol * cSizeDef.boxW * CELL_SIZE;
+                                                    const by = boxRow * cSizeDef.boxH * CELL_SIZE;
+                                                    const bw = cSizeDef.boxW * CELL_SIZE;
+                                                    const bh = cSizeDef.boxH * CELL_SIZE;
+                                                    
+                                                    return (
+                                                        <foreignObject key={`fog-${boxId}`} x={bx - bw * 0.25} y={by - bh * 0.25} width={bw * 1.5} height={bh * 1.5} className="pointer-events-none">
+                                                            <div className="w-full h-full flex items-center justify-center overflow-visible" 
+                                                                 style={{ animation: 'fogFade 10s ease-in-out forwards' }}>
+                                                                <span style={{ fontSize: `${Math.min(bw, bh) * 1.5}px`, lineHeight: 1, userSelect: 'none' }}>🫟</span>
+                                                            </div>
+                                                        </foreignObject>
+                                                    );
+                                                })}
+                                            </g>
                                         </svg>
                                     </div>
                                 )}
@@ -3721,81 +3753,81 @@
                         </div>
                     )}
 
-                    {/* === 漂浮功能選單層 (Fixed Layer) === */}
+                    {/* === 固定式底端功能列 (v3.6.0) === */}
                     {!isSpectator && screen === 'game' && (
-                        <div key="floating-menus" style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1000 }}>
-                            {/* --- 縮放功能選單 (☰) --- */}
-                            <div style={zoomMenuPos.x === -1 ? { position: 'absolute', bottom: '32px', right: '32px' } : { position: 'absolute', left: `${zoomMenuPos.x}px`, top: `${zoomMenuPos.y}px` }}>
-                                <div className="relative pointer-events-auto">
-                                    <button
-                                        onPointerDown={handleZoomPointerDown} onPointerUp={handleMenuPointerUpGlobal}
-                                        onClick={() => { if(!isDraggingZoom && !wasZoomDragged.current) setZoomMenuOpen(!zoomMenuOpen); }}
-                                        className={`w-12 h-12 border-[3px] border-slate-800 rounded-full font-black shadow-[4px_4px_0px_#1e293b] active:scale-95 transition-all z-50 flex items-center justify-center text-2xl ${isDraggingZoom ? 'bg-emerald-400' : zoomMenuOpen ? 'bg-rose-400 text-white' : 'bg-white text-slate-800'}`}
-                                        style={{ transform: 'translate(-50%, -50%)' }}
-                                        title="縮放與視角設定 (長按移動)"
-                                    >
-                                        <span>{isDraggingZoom ? '🎯' : zoomMenuOpen ? '✕' : '☰'}</span>
-                                    </button>
-                                    {zoomMenuOpen && !isDraggingZoom && (
-                                        <div className="absolute flex gap-2 bg-white border-[3px] border-slate-800 p-2 rounded-[2rem] shadow-[10px_10px_0px_rgba(30,41,59,0.15)] animate-popUpCenter z-40 items-center" 
-                                             style={Object.assign({}, (zoomMenuPos.y > window.innerHeight / 2 || zoomMenuPos.y === -1) ? { bottom: 'calc(50% + 32px)', flexDirection: 'column-reverse' } : { top: 'calc(50% + 32px)', flexDirection: 'column' }, { left: '50%', transform: 'translateX(-50%)' })}>
-                                            <button onClick={handleCycleZoom} className="w-10 h-10 bg-slate-800 text-white border-[3px] border-slate-800 rounded-xl font-black text-[10px] items-center justify-center flex">{zoomModeIdx === 0 ? '1X' : zoomModeIdx === 1 ? '↔️' : zoomModeIdx === 2 ? '↕️' : '🔲'}</button>
-                                            <button onClick={handleZoomOut} className="w-10 h-10 bg-white border-[3px] border-slate-800 rounded-xl font-black text-xl flex items-center justify-center">－</button>
-                                            <button onClick={handleZoomIn} className="w-10 h-10 bg-white border-[3px] border-slate-800 rounded-xl font-black text-lg flex items-center justify-center">＋</button>
-                                            <button onClick={() => setMenuVertical(!menuVertical)} className="w-10 h-10 bg-slate-100 border-[3px] border-slate-800 rounded-xl flex items-center justify-center">🔃</button>
-                                        </div>
+                        <div className="fixed bottom-0 left-0 right-0 z-[100] pb-safe">
+                            {/* 戰鬥道具區 (浮動在工具列上方) */}
+                            {matchPhase === 'playing' && (
+                                <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-row gap-4 items-center pointer-events-none">
+                                    {unopenedGifts[myId] && unopenedGifts[myId].length > 0 && (
+                                        <button id="btn-open-gift" onClick={handleOpenGift} className="pointer-events-auto relative w-14 h-14 bg-pink-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl animate-bounce flex items-center justify-center p-0">
+                                            🎁 <div className="absolute -top-1.5 -right-1.5 bg-red-500 text-white font-black text-xs w-6 h-6 flex items-center justify-center rounded-full border-2 border-slate-800">{unopenedGifts[myId].length}</div>
+                                        </button>
+                                    )}
+                                    {isGhostRace && myWeapons.filter(w => w === 'balloon').length > 0 && (
+                                        <button onClick={() => handleUseWeapon('balloon')} className="pointer-events-auto relative w-14 h-14 bg-violet-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl anim-weapon flex items-center justify-center">
+                                            💧 {myWeapons.filter(w => w === 'balloon').length > 1 && <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-900 font-black text-xs w-5 h-5 flex items-center justify-center rounded-full border-2 border-slate-800">{myWeapons.filter(w => w === 'balloon').length}</div>}
+                                        </button>
+                                    )}
+                                    {isGhostRace && myWeapons.filter(w => w === 'eraser').length > 0 && (
+                                        <button onClick={() => handleUseWeapon('eraser')} className="pointer-events-auto relative w-14 h-14 bg-orange-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl anim-weapon flex items-center justify-center">
+                                            🧹 {myWeapons.filter(w => w === 'eraser').length > 1 && <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-900 font-black text-xs w-5 h-5 flex items-center justify-center rounded-full border-2 border-slate-800">{myWeapons.filter(w => w === 'eraser').length}</div>}
+                                        </button>
                                     )}
                                 </div>
-                            </div>
+                            )}
 
-                            {/* --- 模式切換選單 (✒️/✏️/🖌️) --- */}
-                            <div style={modeMenuPos.x === -1 ? { position: 'absolute', bottom: '32px', right: '110px' } : { position: 'absolute', left: `${modeMenuPos.x}px`, top: `${modeMenuPos.y}px` }}>
-                                <div className="relative pointer-events-auto">
-                                    <button
-                                        onPointerDown={handleModePointerDown} onPointerUp={handleMenuPointerUpGlobal}
-                                        onClick={() => { if(isDraggingMode || wasModeDragged.current) return; if(interactionMode === 2) setModeSubOpen(!modeSubOpen); else toggleInteractionMode(); }}
-                                        className={`w-12 h-12 border-[3px] border-slate-800 rounded-full font-black shadow-[4px_4px_0px_#1e293b] active:scale-95 transition-all z-50 flex items-center justify-center text-2xl ${isDraggingMode ? 'bg-emerald-400' : interactionMode === 2 ? 'bg-[#ffcc00] ring-4 ring-yellow-200' : 'bg-white'}`}
-                                        style={{ transform: 'translate(-50%, -50%)' }}
-                                        title="切換填答模式 (長按移動)"
-                                    >
-                                        <span>{isDraggingMode ? '🎯' : (modeSubOpen && interactionMode === 2) ? '✕' : modeIcons[interactionMode]}</span>
+                            {/* 主工具列內層 */}
+                            <div className="bg-[#fffdfa]/95 backdrop-blur-md border-t-[4px] border-slate-800 h-16 md:h-20 flex items-center justify-between px-3 md:px-6 shadow-[0_-4px_20px_rgba(0,0,0,0.1)]">
+                                {/* 左側：縮放控制 */}
+                                <div className="flex items-center gap-1.5 md:gap-3 bg-slate-100 p-1 rounded-xl border-2 border-slate-300">
+                                    <button onClick={handleCycleZoom} className="w-11 h-11 md:w-14 md:h-14 bg-white border-[3px] border-slate-800 rounded-lg shadow-[2px_2px_0px_#1e293b] active:translate-y-[2px] active:shadow-none flex items-center justify-center text-xs md:text-sm font-black transition-all hover:bg-[#ffcc00] group" title="循環切換縮放模式">
+                                        {zoomIndicator.visible ? (
+                                            <span className="text-blue-600 scale-110">{zoomIndicator.value.toFixed(1)}X</span>
+                                        ) : (
+                                            zoomModeIdx === 0 ? '1X' : zoomModeIdx === 1 ? '↔️' : zoomModeIdx === 2 ? '↕️' : '🔲'
+                                        )}
                                     </button>
-                                    {modeSubOpen && interactionMode === 2 && !isDraggingMode && (
-                                        <div className="absolute flex gap-2.5 bg-white border-[3px] border-slate-800 p-2 rounded-[2rem] shadow-[10px_10px_0px_rgba(30,41,59,0.15)] animate-popUpCenter z-40 items-center" 
-                                             style={Object.assign({}, (modeMenuPos.y > window.innerHeight / 2 || modeMenuPos.y === -1) ? { bottom: 'calc(50% + 32px)', flexDirection: 'column-reverse' } : { top: 'calc(50% + 32px)', flexDirection: 'column' }, { left: '50%', transform: 'translateX(-50%)' })}>
-                                            <button onClick={() => setDrawSubMode('pen')} className={`w-10 h-10 border-[3px] border-slate-800 rounded-xl font-black text-lg flex items-center justify-center transition-all ${drawSubMode === 'pen' ? 'scale-110 ring-2 ring-emerald-300 ring-offset-1' : 'bg-white opacity-80'}`} style={drawSubMode === 'pen' && myCurrentColor !== 'rainbow' ? { backgroundColor: myCurrentColor } : { backgroundColor: drawSubMode === 'pen' && myCurrentColor === 'rainbow' ? 'transparent' : '#fff' }}>
-                                                {drawSubMode === 'pen' && myCurrentColor === 'rainbow' && (<svg className="absolute inset-0 w-full h-full pointer-events-none -z-10"><rect width="100%" height="100%" fill="url(#rainbowGrad)" /></svg>)}
-                                                <span className={drawSubMode === 'pen' ? 'text-white' : 'grayscale'}>🖌️</span>
-                                            </button>
-                                            <button onClick={() => setDrawSubMode('eraser')} onDoubleClick={clearOwnStrokes} className={`w-10 h-10 border-[3px] border-slate-800 rounded-xl font-black flex items-center justify-center transition-all ${drawSubMode === 'eraser' ? 'scale-110 ring-2 ring-orange-300 ring-offset-1 bg-orange-500 text-white' : 'bg-white opacity-80 grayscale'}`}>🧽</button>
-                                            {isHostRef.current && <button onClick={clearAllStrokes} className="w-10 h-10 bg-rose-50 border-[3px] border-rose-800 text-rose-800 rounded-xl font-black flex items-center justify-center hover:bg-rose-100" title="房主：清除全場塗鴉">🚮</button>}
-                                            <div className="w-full h-[2px] bg-slate-200 my-0.5" />
-                                            <button onClick={toggleInteractionMode} className="w-10 h-10 bg-slate-100 border-[3px] border-slate-800 rounded-xl flex items-center justify-center text-xs font-black" title="切換回填答/草稿">🔄</button>
-                                        </div>
-                                    )}
+                                    <div className="w-[2px] h-6 bg-slate-300 hidden md:block" />
+                                    <button onClick={handleZoomOut} className="w-10 h-10 md:w-12 md:h-12 bg-white border-[3px] border-slate-800 rounded-lg shadow-[2px_2px_0px_#1e293b] active:translate-y-[2px] active:shadow-none flex items-center justify-center text-xl font-black" title="縮小">－</button>
+                                    <button onClick={handleZoomIn} className="w-10 h-10 md:w-12 md:h-12 bg-white border-[3px] border-slate-800 rounded-lg shadow-[2px_2px_0px_#1e293b] active:translate-y-[2px] active:shadow-none flex items-center justify-center text-xl font-black" title="放大">＋</button>
+                                </div>
+
+                                {/* 右側：模式切換 (Segmented Control) */}
+                                <div className="flex items-center gap-1 md:gap-2 bg-slate-800 p-1 rounded-2xl border-2 border-slate-800 shadow-inner">
+                                    <button 
+                                        onClick={() => setInteractionMode(0)} 
+                                        className={`px-3 md:px-5 py-1.5 md:py-2 rounded-xl font-black text-sm md:text-base flex items-center gap-1.5 md:gap-2 transition-all ${interactionMode === 0 ? 'bg-[#ffcc00] text-slate-900 shadow-md scale-105' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        <span>🖋️</span>
+                                        <span className="hidden sm:inline">填答</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => setInteractionMode(1)} 
+                                        className={`px-3 md:px-5 py-1.5 md:py-2 rounded-xl font-black text-sm md:text-base flex items-center gap-1.5 md:gap-2 transition-all ${interactionMode === 1 ? 'bg-[#ffcc00] text-slate-900 shadow-md scale-105' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        <span>✏️</span>
+                                        <span className="hidden sm:inline">筆記</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                            if(interactionMode === 2) setModeSubOpen(!modeSubOpen);
+                                            else { setInteractionMode(2); setModeSubOpen(true); }
+                                        }} 
+                                        className={`px-3 md:px-5 py-1.5 md:py-2 rounded-xl font-black text-sm md:text-base flex items-center gap-1.5 md:gap-2 transition-all relative ${interactionMode === 2 ? 'bg-emerald-400 text-slate-900 shadow-md scale-105' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        <span>🖌️</span>
+                                        <span className="hidden sm:inline">塗鴉</span>
+                                        {interactionMode === 2 && modeSubOpen && (
+                                            <div className="absolute bottom-full mb-6 right-0 flex flex-col gap-3 bg-white border-[3px] border-slate-800 p-2.5 rounded-2xl shadow-[10px_10px_0px_rgba(30,41,59,0.2)] animate-popUpCenter pointer-events-auto">
+                                                <button onClick={(e) => { e.stopPropagation(); setDrawSubMode('pen'); }} className={`w-12 h-12 border-[3px] border-slate-800 rounded-xl flex items-center justify-center transition-all shadow-[2px_2px_0px_#1e293b] active:shadow-none active:translate-y-[2px] ${drawSubMode === 'pen' ? 'bg-emerald-100 scale-110 border-emerald-600' : 'bg-white hover:bg-slate-50'}`} title="畫筆模式">🖌️</button>
+                                                <button onClick={(e) => { e.stopPropagation(); setDrawSubMode('eraser'); }} onDoubleClick={(e) => { e.stopPropagation(); clearOwnStrokes(); }} className={`w-12 h-12 border-[3px] border-slate-800 rounded-xl flex items-center justify-center transition-all shadow-[2px_2px_0px_#1e293b] active:shadow-none active:translate-y-[2px] ${drawSubMode === 'eraser' ? 'bg-orange-100 scale-110 border-orange-600' : 'bg-white hover:bg-slate-50'}`} title="橡皮擦 (雙擊清除自己所有塗鴉)">🧽</button>
+                                                {isHostRef.current && <button onClick={(e) => { e.stopPropagation(); clearAllStrokes(); }} className="w-12 h-12 bg-rose-50 border-[3px] border-rose-800 text-rose-800 rounded-xl flex items-center justify-center hover:bg-rose-100 shadow-[2px_2px_0px_#1e293b] active:shadow-none active:translate-y-[2px]" title="房主：清除全場塗鴉">🚮</button>}
+                                            </div>
+                                        )}
+                                    </button>
                                 </div>
                             </div>
-                        </div>
-                    )}
-
-                    {/* === 戰鬥道具固定區 === */}
-                    {screen === 'game' && matchPhase === 'playing' && !isSpectator && (
-                        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex flex-row gap-4 items-center pointer-events-auto">
-                            {unopenedGifts[myId] && unopenedGifts[myId].length > 0 && (
-                                <button id="btn-open-gift" onClick={handleOpenGift} className="relative w-14 h-14 md:w-16 md:h-16 bg-pink-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl md:text-4xl animate-bounce flex items-center justify-center p-0" style={{ animationDuration: '2s' }}>
-                                    🎁 <div className="absolute -top-1.5 -right-1.5 bg-red-500 text-white font-black text-xs w-6 h-6 flex items-center justify-center rounded-full border-2 border-slate-800">{unopenedGifts[myId].length}</div>
-                                </button>
-                            )}
-                            {isGhostRace && myWeapons.filter(w => w === 'balloon').length > 0 && (
-                                <button onClick={() => handleUseWeapon('balloon')} className="relative w-14 h-14 md:w-16 md:h-16 bg-violet-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl md:text-4xl anim-weapon flex items-center justify-center">
-                                    💧 {myWeapons.filter(w => w === 'balloon').length > 1 && <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-900 font-black text-xs w-5 h-5 flex items-center justify-center rounded-full border-2 border-slate-800">{myWeapons.filter(w => w === 'balloon').length}</div>}
-                                </button>
-                            )}
-                            {isGhostRace && myWeapons.filter(w => w === 'eraser').length > 0 && (
-                                <button onClick={() => handleUseWeapon('eraser')} className="relative w-14 h-14 md:w-16 md:h-16 bg-orange-500 rounded-full border-[3px] border-slate-800 shadow-[4px_4px_0px_#1e293b] text-3xl md:text-4xl anim-weapon flex items-center justify-center">
-                                    🧹 {myWeapons.filter(w => w === 'eraser').length > 1 && <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-900 font-black text-xs w-5 h-5 flex items-center justify-center rounded-full border-2 border-slate-800">{myWeapons.filter(w => w === 'eraser').length}</div>}
-                                </button>
-                            )}
                         </div>
                     )}
                 </div>
