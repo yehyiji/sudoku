@@ -13,14 +13,17 @@
     <link rel="apple-touch-icon" href="icon.png">
 
     <script>
-        // 抑制 noisy console warnings (Tailwind, Babel)
+        // 抑制 noisy console warnings (Tailwind, Babel, Source Maps)
         (function () {
             const originalWarn = console.warn;
             console.warn = function (...args) {
+                const str = args.join(' ');
                 if (typeof args[0] === 'string' && (
                     args[0].includes('cdn.tailwindcss.com') ||
                     args[0].includes('You are using the in-browser Babel transformer') ||
-                    args[0].includes('Source map')
+                    str.includes('Source map') ||
+                    str.includes('sourceMap') ||
+                    str.includes('原始檔對應')
                 )) return;
                 originalWarn.apply(console, args);
             };
@@ -28,7 +31,12 @@
             const originalError = console.error;
             console.error = function (...args) {
                 const str = args.join(' ');
-                if (str.includes('Source map') || str.includes('sourceMap')) return;
+                if (
+                    str.includes('Source map') || 
+                    str.includes('sourceMap') || 
+                    str.includes('原始檔對應') || 
+                    str.includes('ENOENT')
+                ) return;
                 originalError.apply(console, args);
             };
         })();
@@ -671,7 +679,7 @@
             if (matchPhase === 'playing' || matchPhase === 'finished') {
                 secs = Math.max(0, Math.floor(((endTime || now) - startTime) / 1000));
             }
-            return <span>⏱ {formatTime(secs)}</span>;
+            return <span style={{ color: matchPhase === 'finished' ? '#ff4444' : 'white', fontWeight: 'bold', fontSize: '1.1em' }}>⏱ {formatTime(secs)}</span>;
         }
 
         // ==========================================
@@ -733,7 +741,7 @@
             const [ghostHints, setGhostHints] = useState({});
             const [isBrawlMode, setIsBrawlMode] = useState(false);
             const [brawlWinners, setBrawlWinners] = useState([]);
-            const [brawlSettings, setBrawlSettings] = useState({ winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true, showNumbersInGodMode: false });
+            const [brawlSettings, setBrawlSettings] = useState({ winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true, showNumbersInGodMode: false, allowWeapons: true, weaponStartTime: 60 });
             const [showBrawlSettings, setShowBrawlSettings] = useState(false);
             const [winner, setWinner] = useState(null);
             const isWinnerDeclaredRef = useRef(false);
@@ -778,6 +786,7 @@
             const [myWeapons, setMyWeapons] = useState([]);         // ['balloon','eraser',...]
             const [foggedBoxes, setFoggedBoxes] = useState({});     // { boxId: expiryTimestamp }
             const [erasingCells, setErasingCells] = useState({});   // { cellId: { value, timestamp } }
+            const [finishViewMode, setFinishViewMode] = useState('my'); // 'my' | 'god'
             const lastMilestoneRef = useRef(0);    // 已跨越的 10% 里程碑數量（0~9）
 
             const processedEventsRef = useRef(new Set());
@@ -847,7 +856,7 @@
             const connsRef = useRef([]);
             const zoomContainerRef = useRef(null);
             const lastPinchDist = useRef(null);
-            const stateRef = useRef({ cells: [], localCells: [], levelData: null, startTime: Date.now(), sizeId: 9, diffId: 'medium', strokes: [], isGenerating: false, selectedChar: null, isBrawlMode: false, brawlWinners: [], brawlSettings: { winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true, showNumbersInGodMode: false }, winner: null, isAutoFilling: false, matchPhase: 'playing', countdownTarget: null, giftEvents: [], keyMapping: [], unopenedGifts: {}, myWeapons: [] });
+            const stateRef = useRef({ cells: [], localCells: [], levelData: null, startTime: Date.now(), sizeId: 9, diffId: 'medium', strokes: [], isGenerating: false, selectedChar: null, isBrawlMode: false, brawlWinners: [], brawlSettings: { winnersCount: 3, allowQuickFill: false, allowTraversal: false, allowYellowHint: false, hideAnswers: true, allowOthersToPlayAgain: true, allowGifts: true, showNumbersInGodMode: false }, winner: null, isAutoFilling: false, matchPhase: 'playing', matchEndTime: null, countdownTarget: null, giftEvents: [], keyMapping: [], unopenedGifts: {}, myWeapons: [] });
 
             const playersListRef = useRef([]);
 
@@ -868,7 +877,9 @@
 
                 stateRef.current.brawlWinners = newWinners;
                 if (allDone) {
+                    const now = Date.now();
                     stateRef.current.matchPhase = 'finished';
+                    stateRef.current.matchEndTime = now;
                     stateRef.current.winner = winnerObj;
                 }
 
@@ -882,6 +893,7 @@
                     const syncData = { brawlWinners: newWinners };
                     if (allDone) {
                         syncData.matchPhase = 'finished';
+                        syncData.matchEndTime = stateRef.current.matchEndTime;
                         syncData.winner = winnerObj;
                     }
                     syncState(syncData, true);
@@ -932,6 +944,7 @@
                                 setStartTime(countdownTarget);
                                 setMatchStartTime(countdownTarget);
                                 stateRef.current.matchPhase = 'playing';
+                                stateRef.current.matchEndTime = null;
                                 stateRef.current.startTime = countdownTarget;
                             }
                         }
@@ -1014,9 +1027,9 @@
                 setUnopenedGifts({});
                 scrambledCharsRef.current.clear();
                 processedEventsRef.current.clear();
-                // 新局開始：重置道具系統
                 setMyWeapons([]);
                 setFoggedBoxes({});
+                setFinishViewMode('my');
                 lastMilestoneRef.current = 0;
             }, [startTime]);
 
@@ -1042,7 +1055,7 @@
             const getPlayerColor = (uid) => {
                 const p = playersList.find(p => p.id === uid);
                 if (!p) return COLORS[11];
-                const isOnline = engineRef.current === 'none' || p.id === myId || (isHostRef.current ? connsRef.current.some(c => c.peer === p.id && c.open) : connRef.current && connRef.current.open);
+                const isOnline = engineRef.current === 'none' || p.id === myId || (isHostRef.current ? connsRef.current.some(c => (c.uid === p.id || c.peer === p.id) && c.open) : connRef.current && connRef.current.open);
                 return isOnline ? p.color : '#94a3b8';
             };
 
@@ -1063,7 +1076,7 @@
             }, [playersList, myId]);
 
 
-            useEffect(function () { stateRef.current = { ...stateRef.current, cells, localCells, levelData, startTime, sizeId, diffId, strokes, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping, unopenedGifts, myWeapons, ghostHints }; }, [cells, localCells, levelData, startTime, sizeId, diffId, strokes, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping, unopenedGifts, myWeapons, ghostHints]);
+            useEffect(function () { stateRef.current = { ...stateRef.current, cells, localCells, levelData, startTime, sizeId, diffId, strokes, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, matchEndTime: (stateRef.current.matchEndTime), countdownTarget, keyMapping, unopenedGifts, myWeapons, ghostHints, finishViewMode }; }, [cells, localCells, levelData, startTime, sizeId, diffId, strokes, isBrawlMode, brawlWinners, brawlSettings, winner, matchPhase, countdownTarget, keyMapping, unopenedGifts, myWeapons, ghostHints, finishViewMode]);
 
             // 連線超時處理 (v3.8.14)
             useEffect(() => {
@@ -1359,15 +1372,24 @@
                             isWinnerDeclaredRef.current = true;
                             const finishTime = Date.now();
                             const isBrawl = stateRef.current.isBrawlMode;
-                            if (!isBrawl) { setEndTime(finishTime); setMatchPhase('finished'); }
+                            setIsWon(true);
+                            setEndTime(finishTime);
+                            setHideVictoryModal(false);
+                            if (!isBrawl) { setMatchPhase('finished'); }
                             else {
                                 setIsSpectator(true);
-                                // 不再設為 waiting，保持在 playing 才能看到進度條
                                 showToast("🏁 恭喜完成！已進入觀戰模式，觀察對手中...");
                             }
 
                             const me = playersList.find(p => p.id === myId);
                             const winInfo = { id: myId, name: me ? me.name : "玩家", color: me ? me.color : COLORS[0], time: formatTime(Math.floor((finishTime - (matchStartTime || startTime)) / 1000)), isBrawl };
+                            
+                            // 客戶端先本地同步一份獲勝名單，增加即時感 (v3.10.4)
+                            if (isBrawl) setBrawlWinners(prev => {
+                                if (prev.some(w => w.id === myId)) return prev;
+                                return [...prev, winInfo];
+                            });
+
                             const msgId = Math.random().toString(36).substring(2, 10);
                             const msg = { type: 'GHOST_I_WON', senderUid: myId, id: msgId, time: finishTime, winInfo };
 
@@ -1450,24 +1472,27 @@
 
             const revealSystemCellRef = useRef();
             revealSystemCellRef.current = (cellId) => {
+                const grid = solutionGridRef.current;
+                const targetCell = stateRef.current.localCells.find(c => c.id === cellId);
+                if (!grid || !targetCell) return;
+                
+                const ansValue = grid[targetCell.y] ? grid[targetCell.y][targetCell.x] : null;
+                if (ansValue === null || ansValue === undefined) return;
+
                 setLocalCells(prev => {
                     const nextCells = [...prev];
                     const targetIdx = nextCells.findIndex(c => c.id === cellId);
                     if (targetIdx === -1) return prev;
                     const target = nextCells[targetIdx];
 
-                    const grid = solutionGridRef.current;
-                    if (!grid) return prev;
-                    const ans = grid[target.y][target.x];
-
-                    nextCells[targetIdx] = { ...target, value: ans, drafts: [], isSystemRevealed: true, owner: null };
+                    nextCells[targetIdx] = { ...target, value: ansValue, drafts: [], isSystemRevealed: true, owner: null };
 
                     for (let i = 0; i < nextCells.length; i++) {
                         if (i !== targetIdx) {
                             const c = nextCells[i];
                             if (c.x === target.x || c.y === target.y || c.boxId === target.boxId) {
-                                if (c.drafts.includes(ans)) {
-                                    nextCells[i] = { ...c, drafts: c.drafts.filter(d => d !== ans) };
+                                if (c.drafts.includes(ansValue)) {
+                                    nextCells[i] = { ...c, drafts: c.drafts.filter(d => d !== ansValue) };
                                 }
                             }
                         }
@@ -1477,7 +1502,7 @@
                 });
 
                 const me = playersListRef.current.find(p => p.id === myId);
-                const msg = { type: 'GHOST_SOLVED', uid: myId, color: me ? me.color : myColorRef.current, cellId, id: Math.random().toString(36).substring(2, 11), value: ans };
+                const msg = { type: 'GHOST_SOLVED', uid: myId, color: me ? me.color : myColorRef.current, cellId, id: Math.random().toString(36).substring(2, 11), value: ansValue };
                 if (engineRef.current === 'peerjs') {
                     if (isHostRef.current) connsRef.current.forEach(c => c.send(msg)); else if (connRef.current) connRef.current.send(msg);
                 }
@@ -1545,8 +1570,9 @@
                 if (!isHostRef.current) return;
                 if (stateRef.current.brawlSettings.allowGifts === false) return;
 
-                // 遊戲開始 1 分鐘內不發送道具 (v3.8.0)
-                if (Date.now() - stateRef.current.startTime < 60000) return;
+                if (stateRef.current.brawlSettings.allowWeapons === false) return;
+                const delay = (stateRef.current.brawlSettings.weaponStartTime || 0) * 1000;
+                if (Date.now() - stateRef.current.startTime < delay) return;
 
                 const triggererUid = ev.uid;
                 const triggererPct = ev.completionPct;
@@ -1557,42 +1583,62 @@
                     !p.isSpectator && !winnersIds.includes(p.id) && p.id !== triggererUid
                 );
 
-                // 計算每人有效完成率（從 ghostHints 直接計算，因為 ghostProgress 是 computed value）
+                // 權重分配：越弱勢的人權重越高 (v3.13.0 加強公平性)
                 const ghostHintsData = stateRef.current.ghostHints || {};
-                const totalEmp = stateRef.current.localCells.filter(c => !c.isGiven).length || 1;
+                const totalEmp = stateRef.current.cells.filter(c => !c.isGiven).length || 1;
                 const getEffPct = (uid) => {
-                    // 從 ghostHints 計算該玩家已填格數（ghostHints[cellId][uid] 代表有填）
                     const corr = Object.values(ghostHintsData).filter(hints => hints && hints[uid]).length;
                     const gifts = (stateRef.current.unopenedGifts[uid] || []).length;
-                    return Math.min(99, Math.floor(((corr + gifts) / totalEmp) * 100));
+                    return Math.floor(((corr + gifts) / totalEmp) * 100);
                 };
 
-                // 只選比觸發者完成率低的玩家
-                const weakerCandidates = candidates.filter(p => getEffPct(p.id) < triggererPct);
-                if (weakerCandidates.length === 0) return;
+                // 所有人（除了已過關者）都是候選人
+                const brawlCandidates = playersListRef.current.filter(p => !p.isSpectator && !winnersIds.includes(p.id));
+                if (brawlCandidates.length === 0) return;
 
-                // 加權獨立擲骰：每人各自有機率獲得道具
-                weakerCandidates.forEach(p => {
-                    const gap = triggererPct - getEffPct(p.id);
-                    const prob = Math.min(0.85, Math.sqrt(gap + 1) / (weakerCandidates.length + 2));
-                    if (Math.random() < prob) {
-                        // 道具上限：每種各 3 個
-                        const curWeapons = stateRef.current.myWeapons || [];
-                        // （注意：這裡 myWeapons 是自己的，不是目標的；主機只能廣播給目標）
-                        const weaponType = Math.random() < 0.5 ? 'balloon' : 'eraser';
-                        const wid = Math.random().toString(36).substring(2, 10);
-                        const wMsg = { type: 'RECEIVE_WEAPON', targetUid: p.id, weaponType, id: wid, timestamp: Date.now() };
-                        // 廣播給所有人（讓目標自己接收）
-                        if (engineRef.current === 'peerjs') {
-                            connsRef.current.forEach(c => c.send(wMsg));
-                            // 如果目標是主機自己（主機玩家）
-                            if (p.id === myId) {
-                                setMyWeapons(prev => prev.filter(w => w === weaponType).length >= 3 ? prev : [...prev, weaponType]);
-                            }
+                const candidateWeights = brawlCandidates.map(p => {
+                    const progress = getEffPct(p.id);
+                    // 權重 = (100 - 進度)^2 + 10 (保底權重)
+                    const weight = Math.pow(Math.max(1, 100 - progress), 2) + 10;
+                    return { id: p.id, weight };
+                });
+
+                const totalWeight = candidateWeights.reduce((sum, w) => sum + w.weight, 0);
+                
+                // 根據人數決定發放道具數量 (1~2 個)
+                const weaponsToGive = brawlCandidates.length >= 3 ? 2 : 1;
+                
+                for (let i = 0; i < weaponsToGive; i++) {
+                    let random = Math.random() * totalWeight;
+                    let selectedId = null;
+                    for (let cw of candidateWeights) {
+                        random -= cw.weight;
+                        if (random <= 0) {
+                            selectedId = cw.id;
+                            break;
                         }
                     }
-                });
+                    if (!selectedId) selectedId = candidateWeights[0].id;
+
+                    // 準備道具訊息
+                    const weaponType = Math.random() < 0.5 ? 'balloon' : 'eraser';
+                    const wid = Math.random().toString(36).substring(2, 10);
+                    const wMsg = { type: 'RECEIVE_WEAPON', targetUid: selectedId, weaponType, id: wid, timestamp: Date.now() };
+
+                    // 廣播給所有人
+                    if (engineRef.current === 'peerjs') {
+                        connsRef.current.forEach(c => c.send(wMsg));
+                        // 自己也要接收（如果是主機自己落後）
+                        if (selectedId === myId && handleReceiveWeaponRef.current) {
+                            handleReceiveWeaponRef.current(wMsg);
+                        }
+                        // 房主上帝日誌：方便測試 (v3.10.12)
+                        const targetName = playersListRef.current.find(p => p.id === selectedId)?.name || '玩家';
+                        if (isSpectator) showToast(`🛡️ 上帝偵測到里程碑：發送武器給 ${targetName}`);
+                    }
+                }
             };
+
 
             // 接收道具：各項道具上限 3 個
             handleReceiveWeaponRef.current = (ev) => {
@@ -1607,7 +1653,17 @@
 
             // 收到水球霧化攻擊：隨機霧化自己的一個宮格 10 秒
             handleWeaponHitFogRef.current = (ev) => {
-                if (ev.targetUid !== myId || isSpectator) return;
+                const targetObj = playersListRef.current.find(p => p.id === ev.targetUid);
+                const senderObj = playersListRef.current.find(p => p.id === ev.senderUid);
+                
+                if (ev.targetUid !== myId) {
+                    // 如果我是主機或觀戰者，顯示誰攻擊了誰 (v3.13.2)
+                    if ((isHostRef.current || isSpectator) && senderObj && targetObj) {
+                        showToast(`📢 ${senderObj.name} 向 ${targetObj.name} 扔了水球！`);
+                    }
+                    return;
+                }
+                if (isSpectator) return;
                 // 選一個隨機宮格（從有數字的格子中選）
                 const totalBoxes = cSizeDef.size; // 9x9 有 9 個宮格 (boxId 0~8)
                 const randomBoxId = Math.floor(Math.random() * totalBoxes);
@@ -1626,7 +1682,17 @@
 
             // 收到格子清除攻擊：清除自己隨機一格已填正確的格子
             handleWeaponHitEraseRef.current = (ev) => {
-                if (ev.targetUid !== myId || isSpectator) return;
+                const targetObj = playersListRef.current.find(p => p.id === ev.targetUid);
+                const senderObj = playersListRef.current.find(p => p.id === ev.senderUid);
+
+                if (ev.targetUid !== myId) {
+                    // 如果我是主機或觀戰者，顯示誰攻擊了誰 (v3.13.2)
+                    if ((isHostRef.current || isSpectator) && senderObj && targetObj) {
+                        showToast(`📢 ${senderObj.name} 正在清除 ${targetObj.name} 的格字！`);
+                    }
+                    return;
+                }
+                if (isSpectator) return;
                 const solution = solutionGridRef.current;
                 if (!solution) return;
                 // 找所有已填正確、非預填、非系統揭露的格子
@@ -1689,9 +1755,10 @@
                 if (strongerPlayers.length === 0) {
                     targetUid = validPlayers[Math.floor(Math.random() * validPlayers.length)].id;
                 } else {
+                    // 權重計算：差距愈大，權重愈高 (差距的 2 次方 + 5 基礎分)
                     const weights = strongerPlayers.map(p => {
                         const pScore = Object.values(hintsData).filter(h => h && h[p.id]).length + (giftsData[p.id] ? giftsData[p.id].length : 0);
-                        return Math.sqrt(pScore - myScore);
+                        return Math.pow(Math.max(1, pScore - myScore), 2) + 5;
                     });
                     const totalWeight = weights.reduce((a, b) => a + b, 0);
                     let rand = Math.random() * totalWeight;
@@ -1702,11 +1769,14 @@
                     }
                 }
 
-                // 移除已使用的道具
+                // 移除已使用的道具 (修正連續點擊問題：在更新回調中找 index)
                 setMyWeapons(prev => {
                     const next = [...prev];
-                    next.splice(idx, 1);
-                    stateRef.current.myWeapons = next;
+                    const realIdx = next.indexOf(weaponType);
+                    if (realIdx !== -1) {
+                        next.splice(realIdx, 1);
+                        stateRef.current.myWeapons = next;
+                    }
                     return next;
                 });
 
@@ -1820,6 +1890,7 @@
                 if (partial.levelData !== undefined) setLevelData(partial.levelData);
                 if (partial.startTime !== undefined) { setStartTime(partial.startTime); setMatchStartTime(partial.startTime); }
                 if (partial.matchPhase !== undefined) setMatchPhase(partial.matchPhase);
+                if (partial.matchEndTime !== undefined) stateRef.current.matchEndTime = partial.matchEndTime;
                 if (partial.countdownTarget !== undefined) setCountdownTarget(partial.countdownTarget);
 
                 if (partial.isGenerating !== undefined) {
@@ -1827,8 +1898,9 @@
                     if (partial.isGenerating) {
                         setIsWon(false); setWinner(null); setEndTime(null); isWinnerDeclaredRef.current = false; setUnopenedGifts({});
                         completedRegionsRef.current.clear(); scrambledCharsRef.current.clear(); setBrawlWinners([]);
-                        // 重置觀戰狀態：房主在大亂鬥保持觀戰，其餘玩家恢復參賽
-                        setIsSpectator(isHostRef.current && (partial.isBrawlMode !== undefined ? partial.isBrawlMode : stateRef.current.isBrawlMode));
+                        // 恢復大廳設定的觀戰狀態
+                        const me = playersListRef.current.find(p => p.id === myId);
+                        setIsSpectator(me ? !!me.isLobbySpectator : false);
                     }
                 }
 
@@ -1908,7 +1980,7 @@
                 if (!tempPlayerName.trim()) return showToast("⚠️ 請輸入暱稱");
                 myNameRef.current = tempPlayerName;
                 setEngine('peerjs'); engineRef.current = 'peerjs';
-                syncState({ levelData: emptyLevelData, cells: [], localCells: [], matchPhase: 'waiting', isBrawlMode: false, isBrawlMode: false }, false);
+                syncState({ levelData: emptyLevelData, cells: [], localCells: [], matchPhase: 'waiting', matchEndTime: null, isBrawlMode: false }, false);
                 const rID = Math.floor(1000 + Math.random() * 9000).toString();
                 setIsConnecting(true);
                 setupPeerJS(rID, tempPlayerName, true);
@@ -1938,14 +2010,23 @@
                 }
             };
 
-            const toggleSpectator = (targetId) => {
+            const toggleSpectator = (targetId, isTemp = false, forceState = null) => {
                 if (isHostRef.current) {
-                    const nList = playersListRef.current.map(p => p.id === targetId ? { ...p, isSpectator: !p.isSpectator } : p);
+                    const nList = playersListRef.current.map(p => {
+                        if (p.id === targetId) {
+                            const newState = (forceState !== null) ? forceState : !p.isSpectator;
+                            return { ...p, isSpectator: newState, isLobbySpectator: isTemp ? p.isLobbySpectator : newState };
+                        }
+                        return p;
+                    });
                     setPlayersList(nList);
                     connsRef.current.forEach(c => { if (c.open) c.send({ type: 'PLAYERS_UPDATE', players: nList }); });
-                    if (targetId === myId) setIsSpectator(nList.find(p => p.id === myId).isSpectator);
+                    if (targetId === myId) {
+                        const me = nList.find(p => p.id === myId);
+                        if (me) setIsSpectator(me.isSpectator);
+                    }
                 } else if (connRef.current && connRef.current.open && targetId === myId) {
-                    connRef.current.send({ type: 'REQ_SPEC_TOGGLE', targetId: myId });
+                    connRef.current.send({ type: 'REQ_SPEC_TOGGLE', targetId: myId, isTemp, forceState });
                 }
             };
 
@@ -2163,7 +2244,7 @@
                                 if (c.x === targetCell.x || c.y === targetCell.y || c.boxId === targetCell.boxId) { if (c.drafts.includes(char)) currentCells[i] = { ...c, drafts: c.drafts.filter(d => d !== char) }; }
                             }
                         }
-                        if isBrawlMode {
+                        if (isBrawlMode) {
                             syncState({ localCells: currentCells }, false);
                             if (isMultiplayer) {
                                 const me = playersListRef.current.find(p => p.id === myId);
@@ -2207,7 +2288,7 @@
                         const cellIdx = newRowCells.findIndex(c => c.x === x && c.y === y); const cell = newRowCells[cellIdx];
                         if (cell.value === null && isValid(cell)) { if (!cell.drafts.includes(char)) { newRowCells[cellIdx] = { ...cell, drafts: [...cell.drafts, char] }; stateChanged = true; rowChanged = true; } }
                     }
-                    if (rowChanged) { currentCells = newRowCells; if isBrawlMode syncState({ localCells: currentCells }, false); else syncState({ cells: currentCells }); await new Promise(r => setTimeout(r, 40)); }
+                    if (rowChanged) { currentCells = newRowCells; if (isBrawlMode) syncState({ localCells: currentCells }, false); else syncState({ cells: currentCells }); await new Promise(r => setTimeout(r, 40)); }
                 }
 
                 if (stateChanged) { if (engineRef.current === 'none') setHistory(past => [...past.slice(past.length > 25 ? 1 : 0), currentCells]); showToast(`✏️ 已將 ${char} 標記至所有安全的空格中`); } else { showToast(`💡 沒有更多安全的空格可以標記 ${char} 了`); }
@@ -2231,11 +2312,11 @@
                         for (let i = 0; i < currentCells.length; i++) {
                             if (i !== idx) { const c = currentCells[i]; if (c.x === targetCell.x || c.y === targetCell.y || c.boxId === targetCell.boxId) { if (c.drafts.includes(fillChar)) { currentCells[i] = { ...c, drafts: c.drafts.filter(d => d !== fillChar) }; } } }
                         }
-                        if isBrawlMode {
+                        if (isBrawlMode) {
                             syncState({ localCells: currentCells, selectedChar: fillChar }, false);
                             if (isMultiplayer) {
                                 const me = playersListRef.current.find(p => p.id === myId);
-                                const msg = { type: 'GHOST_SOLVED', uid: myId, color: me ? me.color : myColorRef.current, cellId, id: Math.random().toString(36).substring(2, 11), value: char };
+                                const msg = { type: 'GHOST_SOLVED', uid: myId, color: me ? me.color : myColorRef.current, cellId, id: Math.random().toString(36).substring(2, 11), value: fillChar };
                                 if (engineRef.current === 'peerjs') {
                                     if (isHostRef.current) connsRef.current.forEach(c => c.send(msg)); else if (connRef.current) connRef.current.send(msg);
                                 }
@@ -2459,7 +2540,7 @@
                 setHistory(past => {
                     const newPast = [...past];
                     const lastState = newPast.pop();
-                    if isBrawlMode {
+                    if (isBrawlMode) {
                         setLocalCells(lastState);
                         syncState({ localCells: lastState }, false);
                     } else {
@@ -2582,14 +2663,10 @@
                 let newPhase = (engineRef.current === 'peerjs') ? 'waiting' : 'playing';
                 let cdTarget = null;
                 if (skipLobby && engineRef.current === 'peerjs') { if (isGR) { newPhase = 'countdown'; cdTarget = Date.now() + 5500; } else { newPhase = 'playing'; } }
-                syncState({ isGenerating: true, isBrawlMode: isBrawl, winner: null, matchPhase: newPhase, countdownTarget: cdTarget, giftEvents: [], brawlWinners: [] }, true);
+                setIsSpectator(false);
+                syncState({ isGenerating: true, isBrawlMode: isBrawl, winner: null, matchPhase: newPhase, matchEndTime: null, countdownTarget: cdTarget, giftEvents: [], brawlWinners: [], finishViewMode: 'my' }, true);
                 setPlayersList(prev => {
-                    const nList = prev.map(p => {
-                        const newP = { ...p };
-                        newP.isReady = (engineRef.current === 'none');
-                        // 不再強制房主觀戰，保留原本身分 (v3.8.33)
-                        return newP;
-                    });
+                    const nList = prev.map(p => ({ ...p, isReady: (engineRef.current === 'none'), isSpectator: !!p.isLobbySpectator }));
                     if (engineRef.current === 'peerjs' && isHostRef.current) connsRef.current.forEach(c => c.send({ type: 'PLAYERS_UPDATE', players: nList }));
                     return nList;
                 });
@@ -2597,7 +2674,7 @@
                     generateSudokuAsync(sId, dId, setGenProgress).then(newData => {
                         let solution = null; if (isGR) solution = getSolutionGrid(newData.cells, newData.sizeDef);
                         const initLocalCells = JSON.parse(JSON.stringify(newData.cells));
-                        syncState({ sizeId: sId, diffId: dId, levelData: newData, cells: initLocalCells, localCells: initLocalCells, strokes: [], startTime: Date.now(), isBrawlMode: isBrawl, winner: null, solutionGrid: solution, isGenerating: false, selectedChar: null, keyMapping: newData.sizeDef.chars }, true);
+                        syncState({ sizeId: sId, diffId: dId, levelData: newData, cells: initLocalCells, localCells: initLocalCells, strokes: [], startTime: Date.now(), isBrawlMode: isBrawl, winner: null, matchEndTime: null, solutionGrid: solution, isGenerating: false, selectedChar: null, keyMapping: newData.sizeDef.chars, finishViewMode: 'my' }, true);
                         setIsWon(false); setHistory([]); if (sId !== sizeId) { setZoomLevel(1); setZoomModeIdx(0); }
                         setEndTime(null); setHideVictoryModal(false); setSelectedChar(null); setGenProgress("");
                     });
@@ -2612,8 +2689,6 @@
                     const p = new Peer('yyh-tgsh-' + rId + '-host'); peerRef.current = p;
                     p.on('open', function () {
                         setConnectionStatus("房間已建立，等待進入...");
-
-                        // 判定是否為接管模式 (Host Migration)
                         const currentPhase = stateRef.current.matchPhase;
                         const hasLevelData = stateRef.current.levelData !== null;
                         const isMigrating = hasLevelData && (currentPhase === 'playing' || currentPhase === 'countdown');
@@ -2629,48 +2704,29 @@
                             return newList;
                         });
 
-                        // 強制立刻儲存一次，確保斷線恢復機制有資料 (v3.8.15)
                         saveLocalProgress(rId, myId, pName, true, savedProg ? savedProg.d : []);
                         if (!isMigrating) {
-                            if (savedProg) {
-                                setLocalCells(savedProg.d);
-                                showToast("📦 已恢復上次對局進度");
-                            }
-                            // 如果是全新的房間，立刻產生初始題目，避免第一次直接開始沒有題目的 Bug
+                            if (savedProg) { setLocalCells(savedProg.d); showToast("📦 已恢復上次對局進度"); }
                             generateAndSync(sizeId, diffId, isBrawlMode ? 'brawl' : 'coop');
                         }
                         p.on('connection', function (c) {
                             connsRef.current.push(c);
                             c.on('data', function (m) {
                                 if (m.type === 'JOIN') {
-                                    // 檢查 Session ID (v3.8.19)
                                     const roomSessionId = stateRef.current.sessionId || (localStorage.getItem('sudoku_last_session') ? JSON.parse(localStorage.getItem('sudoku_last_session')).sid : null);
-                                    if (m.sid && roomSessionId && m.sid !== roomSessionId) {
-                                        c.send({ type: 'JOIN_REJECTED', reason: 'session_mismatch' });
-                                        return;
-                                    }
+                                    if (m.sid && roomSessionId && m.sid !== roomSessionId) { c.send({ type: 'JOIN_REJECTED', reason: 'session_mismatch' }); return; }
                                     if (playersListRef.current.some(p => p.name === m.pName && p.id !== m.uid)) { c.send({ type: 'JOIN_REJECTED', reason: 'name_conflict' }); return; }
-
-                                    // 清理舊有的重複連線 (殘影)
                                     connsRef.current = connsRef.current.filter(conn => {
-                                        if (conn.uid === m.uid && conn !== c) {
-                                            try { conn.close(); } catch (e) { }
-                                            return false;
-                                        }
+                                        if (conn.uid === m.uid && conn !== c) { try { conn.close(); } catch (e) { } return false; }
                                         return true;
                                     });
-
                                     c.uid = m.uid;
-                                    // 斷線重連邏輯：如果玩家本來就在名單內，保留其觀戰狀態
                                     const existingPlayer = playersListRef.current.find(pl => pl.id === m.uid);
                                     const isSpec = existingPlayer ? existingPlayer.isSpectator : ((stateRef.current.isBrawlMode) && stateRef.current.matchPhase === 'playing');
-
                                     setPlayersList(prev => {
                                         let nList;
                                         if (prev.find(pl => pl.id === m.uid)) nList = prev.map(pl => pl.id === m.uid ? { ...pl, name: m.pName, isSpectator: isSpec } : pl);
                                         else nList = [...prev, { id: m.uid, name: m.pName || "玩家", isHost: false, color: getAvailableColor(prev), isReady: false, isSpectator: isSpec }];
-
-                                        // 廣播給所有人最新名單，並對新加入者發送 INIT
                                         connsRef.current.forEach(conn => {
                                             if (conn === c) conn.send({ type: 'INIT', data: { ...stateRef.current, solutionGrid: solutionGridRef.current }, players: nList, isSpectator: isSpec });
                                             else if (conn.open) conn.send({ type: 'PLAYERS_UPDATE', players: nList });
@@ -2696,23 +2752,27 @@
                                     });
                                 }
                                 else if (m.type === 'REQ_PLAY_DIRECT') {
-                                    if (isHostRef.current) {
-                                        generateAndSync(stateRef.current.sizeId, stateRef.current.diffId, undefined, true);
-                                    }
+                                    if (isHostRef.current) generateAndSync(stateRef.current.sizeId, stateRef.current.diffId, undefined, true);
                                 }
-                                else if (m.type === 'REQ_COLOR_CHANGE') {
-                                    handlePlayerColorChange(m.targetId, m.color);
+                                else if (m.type === 'REQ_PLAY_AGAIN') {
+                                    if (isHostRef.current) generateAndSync(stateRef.current.sizeId, stateRef.current.diffId, undefined, false);
                                 }
-                                else if (m.type === 'REQ_NAME_CHANGE') {
-                                    handlePlayerNameChange(m.targetId, m.name);
-                                }
+                                else if (m.type === 'REQ_COLOR_CHANGE') handlePlayerColorChange(m.targetId, m.color);
+                                else if (m.type === 'REQ_NAME_CHANGE') handlePlayerNameChange(m.targetId, m.name);
                                 else if (m.type === 'REQ_SPEC_TOGGLE') {
                                     setPlayersList(prev => {
-                                        const nList = prev.map(p => p.id === m.targetId ? { ...p, isSpectator: !p.isSpectator } : p);
+                                        const nList = prev.map(p => {
+                                            if (p.id === m.targetId) {
+                                                const newState = (m.forceState !== undefined && m.forceState !== null) ? m.forceState : !p.isSpectator;
+                                                return { ...p, isSpectator: newState, isLobbySpectator: m.isTemp ? p.isLobbySpectator : newState };
+                                            }
+                                            return p;
+                                        });
                                         connsRef.current.forEach(conn => { if (conn.open) conn.send({ type: 'PLAYERS_UPDATE', players: nList }); });
                                         return nList;
                                     });
                                 }
+                                else if (m.type === 'GHOST_I_WON') { if (isHostRef.current && handleBrawlWinRef.current) handleBrawlWinRef.current(m.winInfo); }
                                 else if (m.type === 'GHOST_SOLVED') {
                                     setGhostHints(prev => {
                                         const newHints = { ...prev };
@@ -2727,31 +2787,55 @@
                                         }
                                         return newHints;
                                     });
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
                                 }
                                 else if (m.type === 'GHOST_WINNER') { setWinner(m.winner); if (m.winner.id === myId) setEndTime(Date.now()); }
-                                else if (m.type === 'CURSOR') setCursors(prev => ({ ...prev, [m.uid]: { x: m.x, y: m.y } }));
-                                else if (m.type === 'CLICK') setRipples(prev => [...prev, { id: Date.now() + Math.random(), uid: m.uid, x: m.x, y: m.y, timestamp: Date.now() }]);
+                                else if (m.type === 'CURSOR') {
+                                    setCursors(prev => ({ ...prev, [m.uid]: { x: m.x, y: m.y } }));
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
+                                else if (m.type === 'CLICK') {
+                                    setRipples(prev => [...prev, { id: Date.now() + Math.random(), uid: m.uid, x: m.x, y: m.y, timestamp: Date.now() }]);
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
                                 else if (m.type === 'REQ_REJOIN') connRef.current.send({ type: 'JOIN', pName: myNameRef.current || "玩家", uid: myId, color: myColorRef.current });
                                 else if (m.type === 'RECEIVE_GIFT') {
                                     setUnopenedGifts(prev => {
                                         const q = prev[m.targetUid] || [];
                                         return { ...prev, [m.targetUid]: [...q, m.senderUid || 'system'] };
                                     });
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
                                 }
                                 else if (m.type === 'GIFT_OPENED') {
                                     if (m.uid !== myId) {
                                         setUnopenedGifts(prev => {
                                             const q = prev[m.uid] || [];
-                                            const nq = [...q];
-                                            nq.shift();
+                                            const nq = [...q]; nq.shift();
                                             return { ...prev, [m.uid]: nq };
                                         });
                                     }
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
                                 }
-                                else if (m.type === 'GIFT_COUNTER_ATTACK') { if (m.targetUid === myId) { if (handleReceiveCounterAttackRef.current) handleReceiveCounterAttackRef.current(); } }
-                                else if (m.type === 'RECEIVE_WEAPON') { if (handleReceiveWeaponRef.current) handleReceiveWeaponRef.current(m); }
-                                else if (m.type === 'WEAPON_HIT_FOG') { if (handleWeaponHitFogRef.current) handleWeaponHitFogRef.current(m); }
-                                else if (m.type === 'WEAPON_HIT_ERASE') { if (handleWeaponHitEraseRef.current) handleWeaponHitEraseRef.current(m); }
+                                else if (m.type === 'GIFT_COUNTER_ATTACK') {
+                                    if (m.targetUid === myId) { if (handleReceiveCounterAttackRef.current) handleReceiveCounterAttackRef.current(); }
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
+                                else if (m.type === 'MILESTONE_REACHED') { 
+                                    if (handleMilestoneRef.current) handleMilestoneRef.current(m); 
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
+                                else if (m.type === 'RECEIVE_WEAPON') { 
+                                    if (handleReceiveWeaponRef.current) handleReceiveWeaponRef.current(m); 
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
+                                else if (m.type === 'WEAPON_HIT_FOG') { 
+                                    if (handleWeaponHitFogRef.current) handleWeaponHitFogRef.current(m); 
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
+                                else if (m.type === 'WEAPON_HIT_ERASE') { 
+                                    if (handleWeaponHitEraseRef.current) handleWeaponHitEraseRef.current(m); 
+                                    connsRef.current.forEach(conn => { if (conn.open && conn !== c) conn.send(m); });
+                                }
                             });
                             c.on('close', function () {
                                 if (c.uid) {
@@ -2903,8 +2987,8 @@
 
                                             return (
                                                 <g key={cell.id}>
-                                                    <rect x={cx + 1} y={cy + 1} width="20" height="20" fill={color} rx="2" />
-                                                    {isFilled && brawlSettings.showNumbersInGodMode && (
+                                                    <rect x={cx + 1} y={cy + 1} width="20" height="20" fill={color} fillOpacity={(isFilled && (cell.isGiven || cell.isSystemRevealed || brawlSettings.showNumbersInGodMode)) ? "0.3" : "1"} rx="2" />
+                                                    {isFilled && (cell.isGiven || cell.isSystemRevealed || brawlSettings.showNumbersInGodMode) && (
                                                         <text x={cx + 11} y={cy + 15} textAnchor="middle" fill="white" className="font-black" style={{ fontSize: '12px' }}>{val}</text>
                                                     )}
                                                 </g>
@@ -3003,7 +3087,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.10.1)</div>
+                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.13.2)</div>
                     </div>
                 );
             }
@@ -3181,7 +3265,7 @@
                                                 {(playersList.find(p => p.id === myId) || {}).isReady ? '✅ 已準備' : '✋ 準備好了'}
                                             </button>
 
-                                            {isHostRef.current && (
+                                            {isHost && (
                                                 <div className="flex-[0.5] flex gap-2">
                                                     <button onClick={handleForceStart} className="w-full py-4 bg-red-500 text-white border-4 border-slate-800 rounded-xl font-black text-lg shadow-[4px_4px_0px_rgba(30,41,59,1)] hover:translate-y-[2px] hover:shadow-none transition-all" title="無視準備狀態直接開始">⚡ 強制開始</button>
                                                 </div>
@@ -3265,6 +3349,25 @@
                                                 syncState({ brawlSettings: newS });
                                             }} className="w-5 h-5 accent-purple-500" />
                                         </label>
+                                        <label className="flex items-center justify-between font-bold text-slate-800 cursor-pointer">
+                                            <span>開啟陷害道具 (水球/橡皮擦)</span>
+                                            <input type="checkbox" checked={brawlSettings.allowWeapons !== false} onChange={e => {
+                                                const newS = { ...brawlSettings };
+                                                newS.allowWeapons = e.target.checked;
+                                                syncState({ brawlSettings: newS });
+                                            }} className="w-5 h-5 accent-purple-500" />
+                                        </label>
+                                        {brawlSettings.allowWeapons !== false && (
+                                            <label className="flex items-center justify-between font-bold text-slate-800">
+                                                <span className="text-sm">陷害道具延遲 (秒)</span>
+                                                <input type="number" min="0" max="600" value={brawlSettings.weaponStartTime} onChange={e => {
+                                                    const val = Math.max(0, Math.min(600, Number(e.target.value)));
+                                                    const newS = { ...brawlSettings };
+                                                    newS.weaponStartTime = val;
+                                                    syncState({ brawlSettings: newS });
+                                                }} className="w-20 border-2 border-slate-800 rounded p-1 text-center font-black" />
+                                            </label>
+                                        )}
                                     </div>
                                 )}
 
@@ -3336,7 +3439,7 @@
                                 <div className="flex items-center gap-1.5 flex-nowrap shrink-0">
                                     <h1 className="font-black tracking-tight uppercase text-base md:text-2xl text-[#2d2a26] flex items-center gap-1 shrink-0">🔢<span className="hidden sm:inline">數獨 - SUDOKU</span></h1>
                                     <div className="flex items-center gap-1 bg-[#2d2a26] text-white px-1.5 py-0.5 rounded font-mono font-bold shadow-[2px_2px_0px_rgba(0,0,0,0.4)] text-[10px] md:text-sm whitespace-nowrap shrink-0">
-                                        <GameTimer startTime={startTime} endTime={endTime || (winner ? matchStartTime : null)} isRunning={!isWon && !winner && screen === 'game' && matchPhase === 'playing'} matchPhase={matchPhase} />
+                                        <GameTimer startTime={startTime} endTime={isBrawlMode ? (matchPhase === 'finished' ? (stateRef.current.matchEndTime || endTime) : null) : (endTime || (winner ? matchStartTime : null))} isRunning={(isBrawlMode ? matchPhase === 'playing' : !isWon) && !winner && screen === 'game'} matchPhase={matchPhase} />
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
                                         {isMultiplayer && (
@@ -3395,7 +3498,7 @@
                                 </div>
 
                                 <div className="flex gap-1.5 items-center ml-auto shrink-0">
-                                    <button onClick={handlePlayAgain} disabled={isMultiplayer && !isHostRef.current} className="px-1.5 py-1 md:px-3 md:py-1.5 bg-blue-500 text-white border-2 border-[#2d2a26] rounded font-bold text-[10px] md:text-sm shadow-[2px_2px_0px_#2d2a26] disabled:opacity-60 disabled:cursor-not-allowed active:translate-y-1 active:shadow-none transition-all flex items-center gap-1 shrink-0" title="新題">🎲<span className="hidden sm:inline">新題</span></button>
+                                    <button onClick={handlePlayAgain} disabled={isMultiplayer && !isHost} className="px-1.5 py-1 md:px-3 md:py-1.5 bg-blue-500 text-white border-2 border-[#2d2a26] rounded font-bold text-[10px] md:text-sm shadow-[2px_2px_0px_#2d2a26] disabled:opacity-60 disabled:cursor-not-allowed active:translate-y-1 active:shadow-none transition-all flex items-center gap-1 shrink-0" title="新題">🎲<span className="hidden sm:inline">新題</span></button>
                                     {(true) && (<button onClick={handleUndo} disabled={history.length === 0 || isWon || (isMultiplayer && !isBrawlMode)} className="px-1.5 py-1 md:px-3 md:py-1.5 bg-white border-2 border-[#2d2a26] rounded font-bold text-[10px] md:text-sm shadow-[2px_2px_0px_#2d2a26] disabled:opacity-50 disabled:shadow-none active:translate-y-1 active:shadow-none transition-all flex items-center gap-1 text-[#2d2a26] shrink-0" title="復原">↩️<span className="hidden sm:inline">復原</span></button>)}
                                     <button onClick={handleReset} className="px-1.5 py-1 md:px-3 md:py-1.5 bg-red-500 text-white border-2 border-[#2d2a26] rounded font-bold text-[10px] md:text-sm shadow-[2px_2px_0px_#2d2a26] active:translate-y-1 active:shadow-none transition-all flex items-center gap-1 shrink-0" title="重置">🔄<span className="hidden sm:inline">重置</span></button>
                                     <button onClick={() => setShowSaveModal(true)} className="px-1.5 py-1 md:px-3 md:py-1.5 bg-blue-500 text-white border-2 border-[#2d2a26] rounded font-bold text-[10px] md:text-sm shadow-[2px_2px_0px_#2d2a26] active:translate-y-1 active:shadow-none transition-all flex items-center gap-1 shrink-0" title="存檔/讀檔">💾<span className="hidden sm:inline">存檔</span></button>
@@ -3456,7 +3559,7 @@
 
                         {!isHeaderCollapsed && (
                             <div className="h-6 md:h-8 shrink-0 flex items-center justify-center bg-slate-800 text-white border-b-4 border-slate-800 relative z-30 font-bold tracking-wide">
-                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；下方工具列可切換模式與縮放。 (v3.8.0)</span>
+                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；下方工具列可切換模式與縮放。 (v3.13.2)</span>
                                 <span className="text-[10px] md:text-sm md:hidden">點選上方數字再點擊方格。支援雙指縮放與平移。</span>
                             </div>
                         )}
@@ -3509,7 +3612,7 @@
 
 
                             <div ref={zoomContainerRef} className="p-2 md:p-6 flex-1 overflow-auto custom-scrollbar relative z-0 flex flex-col">
-                                {isSpectator ? (
+                                {isSpectator || (isBrawlMode && winner && finishViewMode === 'god') ? (
                                     isBrawlMode ? renderHostGodView() : (
                                         <div className="flex-1 flex flex-col items-center justify-center min-h-[400px]">
                                             <div className="bg-white border-4 border-slate-800 rounded-xl p-6 md:p-10 shadow-[8px_8px_0px_rgba(30,41,59,1)] w-full max-w-2xl text-center">
@@ -3580,6 +3683,8 @@
                                                     if (hasConflict) fillColor = '#fee2e2';
                                                     else if (isExactMatch) fillColor = '#fde047';
                                                     else if (isHighlightZone || isFilledWithOther) fillColor = '#fef8cb';
+                                                    else if (isSpectator && cell.isGiven) fillColor = '#f1f5f9'; // 上帝視角下的題目背景：淺灰色 (v3.10.12)
+                                                    
                                                     return <rect key={`bg-${cell.id}`} x={cell.x * CELL_SIZE} y={cell.y * CELL_SIZE} width={CELL_SIZE} height={CELL_SIZE} fill={fillColor} className="transition-colors duration-300 pointer-events-none" />;
                                                 })}
                                             </g>
@@ -3632,12 +3737,32 @@
                                                                 </g>
                                                             )}
 
-                                                            {cell.value ? (
-                                                                <text x={cx + CELL_SIZE / 2} y={cy + CELL_SIZE / 2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight={cell.isGiven || cell.isSystemRevealed ? "900" : "bold"} fill={isRainbow ? undefined : valColor} className={`pointer-events-none select-none ${isRainbow ? 'rainbow-fill' : ''}`}>
-                                                                    {cell.value}
-                                                                </text>
-                                                            ) : (
-                                                                cell.drafts.map(d => {
+                                                            {(() => {
+                                                                // 上帝視角視覺分層 (v3.10.12)
+                                                                if (isSpectator) {
+                                                                    if (cell.isGiven) {
+                                                                        const originalCell = stateRef.current.levelData?.cells?.find(c => c.id === cell.id);
+                                                                        return (
+                                                                            <text x={cx + CELL_SIZE / 2} y={cy + CELL_SIZE / 2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight="900" fill="#1e293b" className="pointer-events-none select-none opacity-40">
+                                                                                {originalCell?.value || cell.value}
+                                                                            </text>
+                                                                        );
+                                                                    }
+                                                                    // 如果是上帝且不是題目，但「上帝視角顯示數字」關閉，則不顯示數字 (即便 cell.value 有值)
+                                                                    if (!brawlSettings.showNumbersInGodMode) {
+                                                                        return null;
+                                                                    }
+                                                                }
+                                                                
+                                                                if (cell.value) {
+                                                                    return (
+                                                                        <text x={cx + CELL_SIZE / 2} y={cy + CELL_SIZE / 2 + 2} textAnchor="middle" dominantBaseline="central" fontSize={CELL_SIZE * 0.6} fontWeight={cell.isGiven || cell.isSystemRevealed ? "900" : "bold"} fill={isRainbow ? undefined : valColor} className={`pointer-events-none select-none ${isRainbow ? 'rainbow-fill' : ''}`}>
+                                                                            {cell.value}
+                                                                        </text>
+                                                                    );
+                                                                }
+                                                                
+                                                                return cell.drafts.map(d => {
                                                                     const idx = cSizeDef.chars.indexOf(d); let dx, dy, fontSize;
                                                                     if (cSizeDef.size === 4) { dx = (idx % 2) * (CELL_SIZE / 2) + (CELL_SIZE / 4); dy = Math.floor(idx / 2) * (CELL_SIZE / 2) + (CELL_SIZE / 4); fontSize = CELL_SIZE * 0.3; }
                                                                     else if (cSizeDef.size === 9) { dx = (idx % 3) * (CELL_SIZE / 3) + (CELL_SIZE / 6); dy = Math.floor(idx / 3) * (CELL_SIZE / 3) + (CELL_SIZE / 6); fontSize = CELL_SIZE * 0.25; }
@@ -3665,8 +3790,8 @@
                                                                             </text>
                                                                         </g>
                                                                     );
-                                                                })
-                                                            )}
+                                                                });
+                                                            })()}
                                                         </g>
                                                     );
                                                 })}
@@ -3677,17 +3802,20 @@
                                                 {isBrawlMode && showGhostProgress && activeCells.map(cell => {
                                                     const ghostInfo = ghostHints[cell.id];
                                                     if (!ghostInfo || cell.isGiven || cell.isSystemRevealed) return null;
-                                                    return Object.entries(ghostInfo).map(([uid, color], idx) => {
+                                                    return Object.entries(ghostInfo).map(([uid, hint], idx) => {
                                                         if (uid === myId) return null; // 不顯示自己的
-                                                        const sqSize = 10;
+                                                        
+                                                        // 只有一位填答者時，且是上帝模式，畫出「大方塊」覆蓋格子背景
+                                                        const isOnlyOneHint = Object.keys(ghostInfo).length === 1;
+                                                        const sqSize = isSpectator && isOnlyOneHint ? CELL_SIZE - 4 : 10;
                                                         const col = idx % 5;
                                                         const row = Math.floor(idx / 5);
-                                                        const offsetX = col * (sqSize + 2);
-                                                        const offsetY = row * (sqSize + 2);
-                                                        // 優先使用 hint 中存儲的顏色，若無則降級搜尋隊伍列表
-                                                        let playerColor = color || getPlayerColor(uid);
+                                                        const offsetX = isSpectator && isOnlyOneHint ? 2 : col * (sqSize + 2);
+                                                        const offsetY = isSpectator && isOnlyOneHint ? 2 : row * (sqSize + 2);
+                                                        
+                                                        let playerColor = (typeof hint === 'object' ? hint.color : hint) || getPlayerColor(uid);
                                                         return (
-                                                            <rect key={`ghost-${cell.id}-${uid}`} x={cell.x * CELL_SIZE + CELL_SIZE - sqSize - 2 - offsetX} y={cell.y * CELL_SIZE + 2 + offsetY} width={sqSize} height={sqSize} fill={playerColor === 'rainbow' ? 'url(#rainbowGrad)' : playerColor} opacity="0.95" rx="2" className="pointer-events-none ghost-highlight" stroke="rgba(255,255,255,0.7)" strokeWidth="1" />
+                                                            <rect key={`ghost-${cell.id}-${uid}`} x={cell.x * CELL_SIZE + (isSpectator && isOnlyOneHint ? 2 : CELL_SIZE - sqSize - 2 - offsetX)} y={cell.y * CELL_SIZE + (isSpectator && isOnlyOneHint ? 2 : 2 + offsetY)} width={sqSize} height={sqSize} fill={playerColor === 'rainbow' ? 'url(#rainbowGrad)' : playerColor} opacity={isSpectator && isOnlyOneHint ? "0.85" : "0.95"} rx={isSpectator && isOnlyOneHint ? "8" : "2"} className="pointer-events-none ghost-highlight" stroke="rgba(255,255,255,0.7)" strokeWidth="1" />
                                                         );
                                                     });
                                                 })}
@@ -3743,7 +3871,7 @@
                             </div>
 
 
-                            {((isWon && !isBrawlMode) || (isBrawlMode && winner)) && !hideVictoryModal && (
+                            {(isWon || (isBrawlMode && winner)) && !hideVictoryModal && (
                                 <div className={`absolute inset-0 z-[60] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] pointer-events-auto ${isClosingModal ? 'animate-fadeOut' : 'animate-fadeIn'}`}>
                                     <div className={`bg-white rounded-2xl p-6 md:p-8 border-[4px] border-[#2d2a26] shadow-[8px_8px_0px_#2d2a26] text-center min-w-[280px] md:min-w-[320px] relative ${isClosingModal ? 'animate-popOutCenter' : 'animate-popUpCenter'}`}>
                                         <button onClick={closeVictoryModal} className="absolute top-2 right-4 text-slate-400 hover:text-[#2d2a26] text-2xl font-black">✕</button>
@@ -3756,7 +3884,7 @@
                                                         const medals = ['🥇', '🥈', '🥉'];
                                                         const medal = medals[i] || `${i + 1}`;
                                                         return (
-                                                            <div key={w.id} className="flex items-center gap-3 bg-slate-50 border-2 border-slate-200 rounded-xl px-3 py-2 shadow-sm">
+                                                            <div key={w.id} className="flex items-center gap-3 bg-slate-50 border-2 border-slate-200 rounded-xl px-3 py-2 shadow-sm animate-fadeIn">
                                                                 <span className="text-2xl w-8 shrink-0 text-center">{medal}</span>
                                                                 <span className="w-3 h-full shrink-0 rounded-full self-stretch" style={{ backgroundColor: w.color === 'rainbow' ? 'transparent' : w.color, minWidth: '4px', maxWidth: '4px', background: w.color === 'rainbow' ? 'linear-gradient(to bottom, red, orange, yellow, green, blue, indigo, violet)' : w.color }}></span>
                                                                 <span className="font-black text-slate-800 flex-1 truncate">{w.name}</span>
@@ -3764,6 +3892,22 @@
                                                             </div>
                                                         );
                                                     })}
+                                                    {(() => {
+                                                        const limit = brawlSettings.winnersCount || 1;
+                                                        const placeholders = [];
+                                                        for (let i = brawlWinners.length; i < limit; i++) {
+                                                            const medals = ['🥇', '🥈', '🥉'];
+                                                            const medal = medals[i] || `${i + 1}`;
+                                                            placeholders.push(
+                                                                <div key={`wait-${i}`} className="flex items-center gap-3 bg-slate-100/50 border-2 border-slate-100 border-dashed rounded-xl px-3 py-2 opacity-50">
+                                                                    <span className="text-2xl w-8 shrink-0 text-center filter grayscale">{medal}</span>
+                                                                    <span className="w-1 h-full shrink-0 bg-slate-300 rounded-full self-stretch"></span>
+                                                                    <span className="font-bold text-slate-400 flex-1 italic text-sm">等待第 {i + 1} 名完成...</span>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return placeholders;
+                                                    })()}
                                                     {brawlWinners.length === 0 && <div className="text-slate-400 text-center font-bold py-4">尚無完成者</div>}
                                                 </div>
                                                 <div className="border-t-2 border-dashed border-slate-200 pt-3 mb-2"></div>
@@ -3783,13 +3927,25 @@
                                                 </React.Fragment>
                                             ) : (
                                                 <React.Fragment>
-                                                    {(isHostRef.current || stateRef.current.brawlSettings.allowOthersToPlayAgain !== false) ? (
-                                                        <React.Fragment>
-                                                            <button onClick={handlePlayAgain} className="flex-1 px-3 py-3 bg-[#ffcc00] text-[#2d2a26] border-[4px] border-[#2d2a26] font-black rounded-xl shadow-[4px_4px_0px_#2d2a26] hover:translate-y-[2px] hover:shadow-none transition-all text-sm sm:text-base">再來一局 (同設定)</button>
-                                                            <button onClick={handleBackToLobby} className="flex-1 px-3 py-3 bg-white text-[#2d2a26] border-[4px] border-[#2d2a26] font-black rounded-xl shadow-[4px_4px_0px_#2d2a26] hover:translate-y-[2px] hover:shadow-none transition-all text-sm sm:text-base">返回大廳更改設定</button>
-                                                        </React.Fragment>
+                                                    {matchPhase === 'finished' ? (
+                                                        (isHostRef.current || stateRef.current.brawlSettings.allowOthersToPlayAgain !== false) ? (
+                                                            <React.Fragment>
+                                                                <button onClick={handlePlayAgain} className="flex-1 px-3 py-3 bg-[#ffcc00] text-[#2d2a26] border-[4px] border-[#2d2a26] font-black rounded-xl shadow-[4px_4px_0px_#2d2a26] hover:translate-y-[2px] hover:shadow-none transition-all text-sm sm:text-base">再來一局 (同設定)</button>
+                                                                <button onClick={handleBackToLobby} className="flex-1 px-3 py-3 bg-white text-[#2d2a26] border-[4px] border-[#2d2a26] font-black rounded-xl shadow-[4px_4px_0px_#2d2a26] hover:translate-y-[2px] hover:shadow-none transition-all text-sm sm:text-base">返回大廳</button>
+                                                            </React.Fragment>
+                                                        ) : (
+                                                            <span className="font-black text-slate-500 bg-slate-100 px-4 py-2 rounded-xl border-2 border-slate-300 w-full text-center">⏳ 等待房主決定下一局...</span>
+                                                        )
                                                     ) : (
-                                                        <span className="font-black text-slate-500 bg-slate-100 px-4 py-2 rounded-xl border-2 border-slate-300 w-full text-center">⏳ 等待房主決定下一局...</span>
+                                                        <React.Fragment>
+                                                            <button onClick={() => {
+                                                                setHideVictoryModal(true);
+                                                                setFinishViewMode('god');
+                                                                toggleSpectator(myId, true, true);
+                                                                showToast("👁️ 已轉變為上帝模式，您可以繼續觀看其他玩家比賽");
+                                                            }} className="flex-1 px-3 py-3 bg-purple-100 text-purple-700 border-[4px] border-purple-700 font-black rounded-xl shadow-[4px_4px_0px_#6d28d9] hover:translate-y-[2px] hover:shadow-none transition-all text-sm sm:text-base">👁️ 轉變為上帝模式 (觀戰)</button>
+                                                            <div className="w-full text-xs font-bold text-slate-400 mt-2 animate-pulse">比賽尚未結束，您可以先轉為觀戰模式...</div>
+                                                        </React.Fragment>
                                                     )}
                                                 </React.Fragment>
                                             )}
@@ -3797,8 +3953,12 @@
                                     </div>
                                 </div>
                             )}
-                            {((isWon && !isBrawlMode) || (isBrawlMode && winner)) && hideVictoryModal && (
-                                <div className="absolute bottom-20 inset-x-0 flex justify-center z-50 pointer-events-none">
+                            {(isWon || (isBrawlMode && winner)) && hideVictoryModal && (
+                                <div className="absolute bottom-20 inset-x-0 flex flex-col items-center gap-3 z-50 pointer-events-none">
+                                    <div className="pointer-events-auto bg-white/90 backdrop-blur-sm border-2 border-slate-800 p-1 rounded-xl shadow-lg flex gap-1">
+                                        <button onClick={() => { setFinishViewMode('my'); toggleSpectator(myId, true, false); }} className={`px-3 py-1.5 rounded-lg font-black text-xs transition-all ${finishViewMode === 'my' ? 'bg-blue-500 text-white shadow-inner' : 'text-slate-500 hover:bg-slate-100'}`}>👤 我的版面</button>
+                                        <button onClick={() => { setFinishViewMode('god'); toggleSpectator(myId, true, true); }} className={`px-3 py-1.5 rounded-lg font-black text-xs transition-all ${finishViewMode === 'god' ? 'bg-purple-500 text-white shadow-inner' : 'text-slate-500 hover:bg-slate-100'}`}>👁️ 上帝視角</button>
+                                    </div>
                                     <button onClick={() => setHideVictoryModal(false)} className="pointer-events-auto bg-[#ffcc00] text-[#2d2a26] border-[4px] border-[#2d2a26] px-6 py-3 rounded-full shadow-[6px_6px_0px_#2d2a26] hover:translate-y-[2px] transition-all font-black flex items-center gap-2 tracking-wide text-lg">🏆 顯示成績</button>
                                 </div>
                             )}
