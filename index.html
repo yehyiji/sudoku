@@ -1208,10 +1208,10 @@
                 if (isBrawlMode) return [];
                 const counts = {};
                 cells.forEach(c => {
-                    if (!c.isGiven && c.value !== null && !conflictCellIds.has(c.id) && c.owner) counts[c.owner] = (counts[c.owner] || 0) + 1;
+                    if (!c.isGiven && c.value !== null && c.owner) counts[c.owner] = (counts[c.owner] || 0) + 1;
                 });
                 return Object.entries(counts).map(([uid, count]) => ({ uid, color: getPlayerColor(uid), pct: Math.round((count / totalEmpty) * 100) }));
-            }, [cells, conflictCellIds, totalEmpty, playersList, isBrawlMode]);
+            }, [cells, totalEmpty, playersList, isBrawlMode]);
 
             // 為幽靈競速模式建立所有人的獨立進度
             const ghostProgress = useMemo(() => {
@@ -1223,8 +1223,8 @@
                         if (counts[uid] !== undefined) counts[uid]++;
                     });
                 });
-                // 自己精確的進度
-                const myAccurateCount = localCells.filter(c => !c.isGiven && c.value !== null && !conflictCellIds.has(c.id)).length;
+                // 自己精確的進度 (v3.13.3 移除衝突檢查，避免透過進度條洩漏答案)
+                const myAccurateCount = localCells.filter(c => !c.isGiven && c.value !== null).length;
                 counts[myId] = Math.max(counts[myId] || 0, myAccurateCount);
 
                 const result = {};
@@ -1744,7 +1744,9 @@
                     return;
                 }
 
-                let myScore = Object.values(hintsData).filter(h => h && h[myId]).length + (giftsData[myId] ? giftsData[myId].length : 0);
+                // 自己精確的進度（不檢查衝突，保持與進度條一致） (v3.13.3)
+                const myAccurateCount = localCells.filter(c => !c.isGiven && c.value !== null).length;
+                let myScore = Math.max(Object.values(hintsData).filter(h => h && h[myId]).length, myAccurateCount) + (giftsData[myId] ? giftsData[myId].length : 0);
 
                 const strongerPlayers = validPlayers.filter(p => {
                     const pScore = Object.values(hintsData).filter(h => h && h[p.id]).length + (giftsData[p.id] ? giftsData[p.id].length : 0);
@@ -3087,7 +3089,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.13.2)</div>
+                        <div className="shrink-0 pb-4 text-slate-800 font-black text-sm opacity-60 tracking-wider z-10">Copyright © 2026 葉大帥. All rights reserved. (v3.13.3)</div>
                     </div>
                 );
             }
@@ -3559,7 +3561,7 @@
 
                         {!isHeaderCollapsed && (
                             <div className="h-6 md:h-8 shrink-0 flex items-center justify-center bg-slate-800 text-white border-b-4 border-slate-800 relative z-30 font-bold tracking-wide">
-                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；下方工具列可切換模式與縮放。 (v3.13.2)</span>
+                                <span className="text-[10px] md:text-sm hidden md:inline">支援滑鼠拖曳、滾輪縮放；下方工具列可切換模式與縮放。 (v3.13.3)</span>
                                 <span className="text-[10px] md:text-sm md:hidden">點選上方數字再點擊方格。支援雙指縮放與平移。</span>
                             </div>
                         )}
@@ -3856,12 +3858,18 @@
                                                     const bh = cSizeDef.boxH * CELL_SIZE;
 
                                                     return (
-                                                        <foreignObject key={`fog-${boxId}`} x={bx - bw * 0.25} y={by - bh * 0.25} width={bw * 1.5} height={bh * 1.5} className="pointer-events-none">
-                                                            <div className="w-full h-full flex items-center justify-center overflow-visible"
-                                                                style={{ animation: 'fogFade 10s ease-in-out forwards' }}>
-                                                                <span style={{ fontSize: `${Math.min(bw, bh) * 1.5}px`, lineHeight: 1, userSelect: 'none' }}>🫟</span>
-                                                            </div>
-                                                        </foreignObject>
+                                                        <text 
+                                                            key={`fog-${boxId}`} 
+                                                            x={bx + bw / 2} 
+                                                            y={by + bh / 2} 
+                                                            textAnchor="middle" 
+                                                            dominantBaseline="middle" 
+                                                            fontSize={`${Math.min(bw, bh) * 1.1}px`}
+                                                            className="pointer-events-none"
+                                                            style={{ animation: 'fogFade 10s ease-in-out forwards', userSelect: 'none', pointerEvents: 'none' }}
+                                                        >
+                                                            🫟
+                                                        </text>
                                                     );
                                                 })}
                                             </g>
